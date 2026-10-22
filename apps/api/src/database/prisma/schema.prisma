@@ -1,0 +1,525 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  schemas   = ["api"]
+}
+
+model appointment_status_history {
+  id             BigInt              @id @default(autoincrement())
+  appointment_id String              @db.Uuid
+  clinic_id      String              @db.Uuid
+  from_status    appointment_status?
+  to_status      appointment_status
+  changed_by     String
+  reason         String?
+  created_at     DateTime            @default(now()) @db.Timestamptz(6)
+  appointments   appointments        @relation(fields: [appointment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  clinics        clinics             @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([appointment_id], map: "appt_status_history_appt_idx")
+  @@schema("api")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This table contains exclusion constraints and requires additional setup for migrations. Visit https://pris.ly/d/exclusion-constraints for more info.
+model appointments {
+  id                         String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id                  String                       @db.Uuid
+  dentist_id                 String                       @db.Uuid
+  patient_id                 String                       @db.Uuid
+  service_id                 String                       @db.Uuid
+  status                     appointment_status           @default(pending)
+  starts_at                  DateTime                     @db.Timestamptz(6)
+  ends_at                    DateTime                     @db.Timestamptz(6)
+  duration_minutes           Int
+  buffer_minutes             Int
+  confirmation_code          String                       @unique(map: "appointments_confirmation_code_uidx")
+  metadata                   Json                         @default("{}")
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  cancelled_at               DateTime?                    @db.Timestamptz(6)
+  cancel_reason              String?
+  rescheduled_from           String?                      @db.Uuid
+  appointment_status_history appointment_status_history[]
+  clinics                    clinics                      @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  dentists                   dentists                     @relation(fields: [dentist_id], references: [id], onUpdate: NoAction)
+  patients                   patients                     @relation(fields: [patient_id], references: [id], onUpdate: NoAction)
+  appointments               appointments?                @relation("appointmentsToappointments", fields: [rescheduled_from], references: [id], onUpdate: NoAction)
+  other_appointments         appointments[]               @relation("appointmentsToappointments")
+  services                   services                     @relation(fields: [service_id], references: [id], onUpdate: NoAction)
+  notifications              notifications[]
+
+  @@index([clinic_id], map: "appointments_clinic_idx")
+  @@index([dentist_id, starts_at], map: "appointments_dentist_starts_idx")
+  @@index([patient_id], map: "appointments_patient_idx")
+  @@index([status])
+  @@schema("api")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model business_hours {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id   String   @db.Uuid
+  day_of_week Int      @db.SmallInt
+  opens_at    DateTime @db.Time(6)
+  closes_at   DateTime @db.Time(6)
+  clinics     clinics  @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([clinic_id], map: "business_hours_clinic_idx")
+  @@schema("api")
+}
+
+model clinics {
+  id                         String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                       String
+  slug                       String                       @unique
+  timezone                   String
+  locale                     String                       @default("en-US")
+  phone                      String?
+  email                      String?                      @db.Citext
+  active                     Boolean                      @default(true)
+  suspended_at               DateTime?                    @db.Timestamptz(6)
+  settings                   Json                         @default("{}")
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  appointment_status_history appointment_status_history[]
+  appointments               appointments[]
+  business_hours             business_hours[]
+  conversations              conversations[]
+  dentist_schedules          dentist_schedules[]
+  dentists                   dentists[]
+  errors                     errors[]
+  handoffs                   handoffs[]
+  inbound_events             inbound_events[]
+  messages                   messages[]
+  notifications              notifications[]
+  patients                   patients[]
+  schedule_blocks            schedule_blocks[]
+  services                   services[]
+  users                      users[]
+  clinic_holiday_overrides   clinic_holiday_overrides[]
+  clinic_whatsapp_integrations clinic_whatsapp_integrations?
+
+  @@schema("api")
+}
+
+model conversations {
+  id                      String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id               String          @db.Uuid
+  patient_id              String?         @db.Uuid
+  channel                 channel_type
+  channel_conversation_id String?
+  state                   Json            @default("{}")
+  last_message_at         DateTime?       @db.Timestamptz(6)
+  closed_at               DateTime?       @db.Timestamptz(6)
+  created_at              DateTime        @default(now()) @db.Timestamptz(6)
+  clinics                 clinics         @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  patients                patients?       @relation(fields: [patient_id], references: [id], onUpdate: NoAction)
+  handoffs                handoffs[]
+  messages                messages[]
+  notifications           notifications[]
+
+  @@index([clinic_id, channel, channel_conversation_id], map: "conversations_lookup_idx")
+  @@index([clinic_id], map: "conversations_clinic_idx")
+  @@index([patient_id], map: "conversations_patient_idx")
+  @@schema("api")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model dentist_schedules {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id   String   @db.Uuid
+  dentist_id  String   @db.Uuid
+  day_of_week Int      @db.SmallInt
+  starts_at   DateTime @db.Time(6)
+  ends_at     DateTime @db.Time(6)
+  clinics     clinics  @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  dentists    dentists @relation(fields: [dentist_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([clinic_id], map: "dentist_schedules_clinic_idx")
+  @@index([dentist_id], map: "dentist_schedules_dentist_idx")
+  @@schema("api")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model dentists {
+  id                     String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id              String              @db.Uuid
+  user_id                String?             @db.Uuid
+  display_name           String
+  specialty              String?
+  title                  String?
+  qualifications         String?
+  experience_years       Int?
+  license_number         String?
+  bio                    String?
+  active                 Boolean             @default(true)
+  default_buffer_minutes Int                 @default(15)
+  created_at             DateTime            @default(now()) @db.Timestamptz(6)
+  appointments           appointments[]
+  dentist_schedules      dentist_schedules[]
+  clinics                clinics             @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                  users?              @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+  schedule_blocks        schedule_blocks[]
+
+  @@index([clinic_id], map: "dentists_clinic_idx")
+  @@schema("api")
+}
+
+model errors {
+  id             BigInt         @id @default(autoincrement())
+  clinic_id      String?        @db.Uuid
+  workflow_name  String?
+  execution_id   String?
+  correlation_id String?
+  category       error_category
+  message        String
+  detail         Json?
+  retry_state    Json?
+  created_at     DateTime       @default(now()) @db.Timestamptz(6)
+  clinics        clinics?       @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([clinic_id, created_at(sort: Desc)], map: "errors_clinic_created_idx")
+  @@schema("api")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model handoffs {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id       String         @db.Uuid
+  conversation_id String?        @db.Uuid
+  patient_id      String?        @db.Uuid
+  channel         channel_type
+  status          handoff_status @default(pending)
+  priority        String         @default("normal")
+  reason          String
+  context         Json           @default("{}")
+  assigned_to     String?        @db.Uuid
+  accepted_at     DateTime?      @db.Timestamptz(6)
+  resolved_at     DateTime?      @db.Timestamptz(6)
+  resolution      String?
+  created_at      DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime       @default(now()) @db.Timestamptz(6)
+  users           users?         @relation(fields: [assigned_to], references: [id], onUpdate: NoAction)
+  clinics         clinics        @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  conversations   conversations? @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+  patients        patients?      @relation(fields: [patient_id], references: [id], onUpdate: NoAction)
+
+  @@index([clinic_id, status], map: "handoffs_clinic_status_idx")
+  @@schema("api")
+}
+
+model inbound_events {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id         String?     @db.Uuid
+  provider          String
+  event_type        String
+  provider_event_id String
+  payload_hash      String
+  raw_payload       Json
+  state             event_state @default(received)
+  attempts          Int         @default(0)
+  last_attempt_at   DateTime?   @db.Timestamptz(6)
+  processed_at      DateTime?   @db.Timestamptz(6)
+  error             Json?
+  created_at        DateTime    @default(now()) @db.Timestamptz(6)
+  clinics           clinics?    @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([provider, provider_event_id])
+  @@index([clinic_id], map: "inbound_events_clinic_idx")
+  @@index([provider, provider_event_id], map: "inbound_events_provider_event_idx")
+  @@index([state])
+  @@schema("api")
+}
+
+model messages {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id           String            @db.Uuid
+  conversation_id     String            @db.Uuid
+  direction           message_direction
+  kind                message_kind
+  body                String?
+  media_url           String?
+  media_mime_type     String?
+  provider_message_id String?
+  provider_payload    Json?
+  created_at          DateTime          @default(now()) @db.Timestamptz(6)
+  clinics             clinics           @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  conversations       conversations     @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([conversation_id, provider_message_id])
+  @@index([clinic_id], map: "messages_clinic_idx")
+  @@index([conversation_id], map: "messages_conversation_idx")
+  @@index([created_at], map: "messages_created_idx")
+  @@schema("api")
+}
+
+model notifications {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id           String            @db.Uuid
+  patient_id          String?           @db.Uuid
+  conversation_id     String?           @db.Uuid
+  appointment_id      String?           @db.Uuid
+  kind                notification_kind
+  channel             channel_type
+  recipient           String
+  template            String
+  variables           Json              @default("{}")
+  status              delivery_status   @default(queued)
+  idempotency_key     String
+  provider_message_id String?
+  attempts            Int               @default(0)
+  max_attempts        Int               @default(5)
+  next_attempt_at     DateTime          @default(now()) @db.Timestamptz(6)
+  sent_at             DateTime?         @db.Timestamptz(6)
+  delivered_at        DateTime?         @db.Timestamptz(6)
+  failed_at           DateTime?         @db.Timestamptz(6)
+  error               Json?
+  created_at          DateTime          @default(now()) @db.Timestamptz(6)
+  appointments        appointments?     @relation(fields: [appointment_id], references: [id], onUpdate: NoAction)
+  clinics             clinics           @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  conversations       conversations?    @relation(fields: [conversation_id], references: [id], onUpdate: NoAction)
+  patients            patients?         @relation(fields: [patient_id], references: [id], onUpdate: NoAction)
+
+  @@unique([clinic_id, idempotency_key])
+  @@index([clinic_id], map: "notifications_clinic_idx")
+  @@index([status, next_attempt_at], map: "notifications_status_next_idx")
+  @@schema("api")
+}
+
+model patients {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id         String          @db.Uuid
+  full_name         String
+  date_of_birth     DateTime?       @db.Date
+  phone             String?
+  email             String?         @db.Citext
+  whatsapp_id       String?
+  consent_whatsapp  Boolean         @default(false)
+  consent_voice     Boolean         @default(false)
+  consent_marketing Boolean         @default(false)
+  opt_out_at        DateTime?       @db.Timestamptz(6)
+  notes             String?
+  created_at        DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime        @default(now()) @db.Timestamptz(6)
+  appointments      appointments[]
+  conversations     conversations[]
+  handoffs          handoffs[]
+  notifications     notifications[]
+  clinics           clinics         @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([clinic_id, phone])
+  @@unique([clinic_id, whatsapp_id])
+  @@index([clinic_id], map: "patients_clinic_idx")
+  @@index([full_name(ops: raw("gist_trgm_ops"))], map: "patients_name_trgm_idx", type: Gist)
+  @@schema("api")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model schedule_blocks {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id  String    @db.Uuid
+  dentist_id String?   @db.Uuid
+  kind       String
+  starts_at  DateTime  @db.Timestamptz(6)
+  ends_at    DateTime  @db.Timestamptz(6)
+  reason     String?
+  clinics    clinics   @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  dentists   dentists? @relation(fields: [dentist_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([clinic_id], map: "schedule_blocks_clinic_idx")
+  @@index([dentist_id], map: "schedule_blocks_dentist_idx")
+  @@schema("api")
+}
+
+model schema_migrations {
+  version    String   @id
+  applied_at DateTime @default(now()) @db.Timestamptz(6)
+  checksum   String?
+
+  @@schema("api")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model services {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id        String         @db.Uuid
+  code             String
+  name             String
+  duration_minutes Int
+  buffer_minutes   Int?
+  active           Boolean        @default(true)
+  price            Decimal?       @db.Decimal(10, 2)
+  currency         String         @default("USD") @db.VarChar(10)
+  pricing_model    String         @default("fixed") @db.VarChar(30)
+  description      String?
+  category         String?        @db.VarChar(100)
+  created_at       DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime       @default(now()) @db.Timestamptz(6)
+  appointments     appointments[]
+  clinics          clinics        @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([clinic_id, code])
+  @@index([clinic_id], map: "services_clinic_idx")
+  @@schema("api")
+}
+
+model clinic_holiday_overrides {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id        String    @db.Uuid
+  holiday_date     DateTime  @db.Date
+  holiday_name     String
+  country_code     String    @default("US") @db.VarChar(10)
+  action           String    @default("closed") @db.VarChar(30)
+  custom_opens_at  DateTime? @db.Time(6)
+  custom_closes_at DateTime? @db.Time(6)
+  notes            String?
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @db.Timestamptz(6)
+  clinics          clinics   @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([clinic_id, holiday_date], map: "uq_clinic_holiday_date")
+  @@index([clinic_id], map: "clinic_holiday_overrides_clinic_idx")
+  @@index([holiday_date], map: "clinic_holiday_overrides_date_idx")
+  @@schema("api")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model users {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id    String     @db.Uuid
+  auth_subject String     @unique
+  full_name    String
+  email        String     @db.Citext
+  role         String
+  active       Boolean    @default(true)
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  dentists     dentists[]
+  handoffs     handoffs[]
+  clinics      clinics    @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([clinic_id], map: "users_clinic_idx")
+  @@schema("api")
+}
+
+enum appointment_status {
+  pending
+  confirmed
+  cancelled
+  completed
+  no_show
+  rescheduled
+
+  @@schema("api")
+}
+
+enum channel_type {
+  whatsapp
+  voice
+  web_chat
+  manual
+
+  @@schema("api")
+}
+
+enum delivery_status {
+  queued
+  sent
+  delivered
+  failed
+  dead_letter
+  processing
+  provider_blocked
+
+  @@schema("api")
+}
+
+enum error_category {
+  validation
+  conflict
+  permission
+  not_found
+  provider_failure
+  db_failure
+  ai_failure
+  unknown
+
+  @@schema("api")
+}
+
+enum event_state {
+  received
+  processed
+  failed
+  duplicate
+  dead_letter
+
+  @@schema("api")
+}
+
+enum handoff_status {
+  pending
+  accepted
+  resolved
+  failed
+
+  @@schema("api")
+}
+
+enum message_direction {
+  inbound
+  outbound
+
+  @@schema("api")
+}
+
+enum message_kind {
+  patient_text
+  patient_media
+  staff_note
+  system
+  delivery_receipt
+
+  @@schema("api")
+}
+
+enum notification_kind {
+  booking_confirmation
+  cancellation
+  rescheduling
+  reminder_24h
+  reminder_2h
+  staff_alert
+  handoff_alert
+
+  @@schema("api")
+}
+
+model clinic_whatsapp_integrations {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id              String    @unique @db.Uuid
+  phone_number_id        String?
+  waba_id                String?
+  encrypted_access_token String?
+  key_version            String    @default("v1")
+  enabled                Boolean   @default(true)
+  status                 String    @default("unconfigured")
+  token_expires_at       DateTime? @db.Timestamptz(6)
+  last_validated_at      DateTime? @db.Timestamptz(6)
+  last_error             String?
+  created_at             DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime  @default(now()) @db.Timestamptz(6)
+  clinics                clinics   @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([clinic_id], map: "clinic_whatsapp_integrations_clinic_idx")
+  @@unique([phone_number_id], map: "clinic_whatsapp_integrations_phone_number_id_uidx")
+  @@schema("api")
+}
+

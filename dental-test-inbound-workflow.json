@@ -1,0 +1,454 @@
+{
+  "name": "Dental AI Receptionist - Dedicated Test Inbound",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dental/test-inbound",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-001",
+      "name": "Inbound Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Dental Clinic Test Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $json.body || {};\nconst missing = [];\nif (!b.clinic_id) missing.push('clinic_id');\nif (!b.patient_name || b.patient_name.trim().length < 2) missing.push('patient_name');\nif (!b.phone || b.phone.trim().length < 8) missing.push('phone');\nif (!b.appointmentDate || !/^\\d{4}-\\d{2}-\\d{2}$/.test(b.appointmentDate)) missing.push('appointmentDate');\nif (!b.appointmentTime) missing.push('appointmentTime');\nif (!b.provider_event_id) missing.push('provider_event_id');\n\nif (missing.length > 0) {\n  return [{ json: { is_valid: false, message: `Missing or invalid required fields: ${missing.join(', ')}` } }];\n}\nreturn [{ json: { is_valid: true, body: b } }];"
+      },
+      "id": "node-code-val-002",
+      "name": "Validate Request Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-if-val-003",
+      "name": "Is Payload Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, code: 'VALIDATION', message: $json.message }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "node-resp-400-004",
+      "name": "Respond Bad Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [780, 180]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  c.id, \n  c.name, \n  c.slug, \n  c.timezone, \n  c.settings,\n  COALESCE(c.id IS NOT NULL, false) AS is_valid\nFROM (SELECT 1) AS dummy\nLEFT JOIN api.clinics c\n  ON c.id::text = $1\n  AND c.id = '00000000-0000-0000-0000-000000000001'::uuid\n  AND c.active = true\n  AND c.suspended_at IS NULL;",
+        "queryParameters": "={{ [$('Inbound Test Webhook').item.json.body?.clinic_id || ''] }}"
+      },
+      "id": "node-pg-clinic-005",
+      "name": "Validate Test Clinic",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [780, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_valid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-if-clinic-006",
+      "name": "Is Test Clinic Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1000, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, code: 'PERMISSION', message: 'Invalid, inactive, or unauthorized clinic ID for test endpoint. Only Demo Dental Clinic (00000000-0000-0000-0000-000000000001) is permitted.' }) }}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "node-resp-403-007",
+      "name": "Respond Test Clinic Forbidden",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1240, 240]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.register_inbound_event($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::jsonb) AS result;",
+        "queryParameters": "={{ [$('Validate Test Clinic').item.json.id, $('Inbound Test Webhook').item.json.body?.provider || 'test', 'message', $('Inbound Test Webhook').item.json.body?.provider_event_id, 'hash-' + $('Inbound Test Webhook').item.json.body?.provider_event_id, JSON.stringify($('Inbound Test Webhook').item.json.body)] }}"
+      },
+      "id": "node-pg-event-008",
+      "name": "Register Inbound Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1240, 440]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.result?.data?.duplicate }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-if-dup-009",
+      "name": "Is Duplicate Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1460, 440]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, code: 'OK', message: 'Event already received and processed (idempotent replay).', data: { event_id: $('Register Inbound Event').item.json.result?.data?.event_id, duplicate: true } }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-resp-dup-010",
+      "name": "Respond Duplicate Event",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1700, 320]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.find_or_create_patient($1::uuid, $2::text, $3::text) AS result;",
+        "queryParameters": "={{ [$('Validate Test Clinic').item.json.id, $('Inbound Test Webhook').item.json.body?.patient_name, $('Inbound Test Webhook').item.json.body?.phone] }}"
+      },
+      "id": "node-pg-patient-011",
+      "name": "Find or Create Patient",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1700, 520]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.search_availability($1::uuid, $2::uuid, $3::uuid, $4::date, 25) AS result;",
+        "queryParameters": "={{ [$('Validate Test Clinic').item.json.id, $('Inbound Test Webhook').item.json.body?.dentist_id || '00000000-0000-0000-0000-000000000003', $('Inbound Test Webhook').item.json.body?.service_id || '2a9ecbee-5b32-43f4-a673-c119c67ad738', $('Inbound Test Webhook').item.json.body?.appointmentDate] }}"
+      },
+      "id": "node-pg-avail-012",
+      "name": "Search Availability",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1920, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "const reqDate = $('Inbound Test Webhook').item.json.body.appointmentDate;\nconst reqTimeStr = $('Inbound Test Webhook').item.json.body.appointmentTime;\nconst slots = $json.result?.data || [];\nconst tz = $('Validate Test Clinic').item.json.timezone || 'America/New_York';\n\nconst match = reqTimeStr.trim().match(/^(\\d{1,2}):(\\d{2})(?:\\s*([AP]M))?$/i);\nif (!match) return [{ json: { slot_found: false, message: 'Invalid time format. Use HH:MM AM/PM' } }];\nlet reqH = parseInt(match[1], 10);\nconst reqM = parseInt(match[2], 10);\nconst mer = match[3] ? match[3].toUpperCase() : null;\nif (mer === 'PM' && reqH < 12) reqH += 12;\nif (mer === 'AM' && reqH === 12) reqH = 0;\n\nconst dtf = new Intl.DateTimeFormat('en-US', {\n  timeZone: tz,\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit',\n  hour: '2-digit',\n  minute: '2-digit',\n  hour12: false\n});\n\nconst matchedSlot = slots.find(s => {\n  const parts = Object.fromEntries(dtf.formatToParts(new Date(s.starts_at)).map(p => [p.type, p.value]));\n  const slotDate = `${parts.year}-${parts.month}-${parts.day}`;\n  const slotH = parseInt(parts.hour, 10);\n  const slotM = parseInt(parts.minute, 10);\n  return slotDate === reqDate && slotH === reqH && slotM === reqM;\n});\n\nif (!matchedSlot) return [{ json: { slot_found: false, requested_date: reqDate, requested_time: reqTimeStr } }];\n\nreturn [{\n  json: {\n    slot_found: true,\n    starts_at: matchedSlot.starts_at,\n    ends_at: matchedSlot.ends_at,\n    duration_minutes: matchedSlot.duration_minutes,\n    buffer_minutes: matchedSlot.buffer_minutes\n  }\n}];"
+      },
+      "id": "node-code-match-013",
+      "name": "Match Requested Slot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2140, 520]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.slot_found }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-if-slot-014",
+      "name": "Is Slot Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2360, 520]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, code: 'CONFLICT', message: 'Requested appointment time is not available. Please choose another slot.' }) }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "node-resp-409-015",
+      "name": "Respond Slot Unavailable",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2600, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.book_appointment($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::timestamptz, $6::jsonb) AS result;",
+        "queryParameters": "={{ [$('Validate Test Clinic').item.json.id, $('Inbound Test Webhook').item.json.body?.dentist_id || '00000000-0000-0000-0000-000000000003', $('Find or Create Patient').item.json.result.data.patient_id, $('Inbound Test Webhook').item.json.body?.service_id || '2a9ecbee-5b32-43f4-a673-c119c67ad738', $('Match Requested Slot').item.json.starts_at, JSON.stringify({ source: 'ai-receptionist', channel: 'web_chat', test_run: true })] }}"
+      },
+      "id": "node-pg-book-016",
+      "name": "Book Appointment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2600, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.result?.ok }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-if-book-017",
+      "name": "Is Booking Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2820, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.result) }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "node-resp-conf-018",
+      "name": "Respond Booking Conflict",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3060, 480]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.result) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-resp-succ-019",
+      "name": "Respond Booking Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3060, 680]
+    }
+  ],
+  "connections": {
+    "Inbound Test Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Request Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Request Payload": {
+      "main": [
+        [
+          {
+            "node": "Is Payload Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Payload Valid?": {
+      "main": [
+        [
+          {
+            "node": "Validate Test Clinic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Bad Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Test Clinic": {
+      "main": [
+        [
+          {
+            "node": "Is Test Clinic Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Test Clinic Valid?": {
+      "main": [
+        [
+          {
+            "node": "Register Inbound Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Test Clinic Forbidden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Inbound Event": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate Event?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate Event?": {
+      "main": [
+        [
+          {
+            "node": "Respond Duplicate Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find or Create Patient",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find or Create Patient": {
+      "main": [
+        [
+          {
+            "node": "Search Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Availability": {
+      "main": [
+        [
+          {
+            "node": "Match Requested Slot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Requested Slot": {
+      "main": [
+        [
+          {
+            "node": "Is Slot Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Slot Available?": {
+      "main": [
+        [
+          {
+            "node": "Book Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Slot Unavailable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book Appointment": {
+      "main": [
+        [
+          {
+            "node": "Is Booking Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Booking Successful?": {
+      "main": [
+        [
+          {
+            "node": "Respond Booking Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Booking Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

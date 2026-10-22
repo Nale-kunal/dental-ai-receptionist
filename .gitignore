@@ -1,0 +1,99 @@
+
+# Environment files — never commit real secrets
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Private keys, certificates, and secret files
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+*.secret
+secrets/
+
+
+# Allow example files
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+
+# Build outputs
+dist/
+build/
+.output/
+.next/
+out/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+.nyc_output/
+lcov.info
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Prisma
+apps/api/src/database/prisma/client/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+.cache/
+
+# Database dumps and exports
+*.sql.dump
+*.pg_dump
+db-backup-*
+
+# Uploaded files (if any local file storage)
+uploads/
+public/uploads/
+
+# Private keys and certificates
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+
+# Generated secrets
+secrets/
+*.secret
+
+# Local test artifacts
+tests/fixtures/real-data/
+tests/snapshots/**/*.sensitive.*
+
+# Docker
+.docker-volumes/
+
+# Local database inspection reports
+apps/api/scripts/schema-discovery-report.json

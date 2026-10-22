@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.next/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+tmp/
+temp/
+.cache/
+uploads/
+*.pem
+*.key
+secrets/
