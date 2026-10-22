@@ -6,7 +6,7 @@ Production-grade multi-tenant Clinic Admin Dashboard for the Dental AI Reception
 
 ## Architecture
 
-```
+```text
 dental-clinic-dashboard/
 ├── apps/
 │   ├── api/          — Express + TypeScript + Prisma backend
@@ -27,8 +27,8 @@ dental-clinic-dashboard/
 ### 1. Clone and install
 
 ```bash
-git clone <repository-url>
-cd dental-clinic-dashboard
+git clone https://github.com/Nale-kunal/dental-ai-receptionist.git
+cd dental-ai-receptionist
 npm install
 ```
 
@@ -71,15 +71,15 @@ npm run dev
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | ✅ | Neon PostgreSQL connection string (pooled) |
+| `DATABASE_URL` | Yes | Neon PostgreSQL connection string (pooled) |
 | `DIRECT_URL` | Optional | Neon direct connection (for migrations) |
-| `NODE_ENV` | ✅ | `development` / `production` / `test` |
-| `PORT` | ✅ | API server port (default: 3001) |
-| `JWT_SECRET` | ✅ | HS256 signing secret (min 32 chars) |
-| `JWT_EXPIRES_IN` | ✅ | Token lifetime e.g. `15m` |
-| `REFRESH_TOKEN_SECRET` | ✅ | Refresh token signing secret |
-| `REFRESH_TOKEN_EXPIRES_IN` | ✅ | e.g. `7d` |
-| `CORS_ORIGINS` | ✅ | Allowed origins e.g. `http://localhost:5173` |
+| `NODE_ENV` | Yes | `development` / `production` / `test` |
+| `PORT` | Yes | API server port (default: 3001) |
+| `JWT_SECRET` | Yes | HS256 signing secret (min 32 chars) |
+| `JWT_EXPIRES_IN` | Yes | Token lifetime, e.g. `15m` |
+| `REFRESH_TOKEN_SECRET` | Yes | Refresh token signing secret |
+| `REFRESH_TOKEN_EXPIRES_IN` | Yes | e.g. `7d` |
+| `CORS_ORIGINS` | Yes | Allowed origins, e.g. `http://localhost:5173` |
 | `LOG_LEVEL` | Optional | `debug` / `info` / `warn` / `error` |
 | `SMTP_HOST` | Optional | Email provider host |
 | `SMTP_PORT` | Optional | Email provider port |
@@ -93,9 +93,9 @@ npm run dev
 
 | Variable | Required | Description |
 |---|---|---|
-| `VITE_API_BASE_URL` | ✅ | Backend API base URL e.g. `http://localhost:3001` |
+| `VITE_API_BASE_URL` | Yes | Backend API base URL, e.g. `http://localhost:3001` |
 
-> ⚠️ **Never** put `DATABASE_URL`, `JWT_SECRET`, or any provider secret in the `apps/web/.env` file.
+> **Never** put `DATABASE_URL`, `JWT_SECRET`, or any provider secret in the `apps/web/.env` file.
 
 ## Available Scripts
 
@@ -154,3 +154,7 @@ See [`docs/deployment.md`](docs/deployment.md) for full deployment instructions.
 | [`docs/security-review.md`](docs/security-review.md) | Security analysis |
 | [`docs/feature-matrix.md`](docs/feature-matrix.md) | Feature implementation status |
 | [`docs/deployment.md`](docs/deployment.md) | Deployment guide |
+
+---
+
+Multi-tenant AI receptionist SaaS for dental clinics, featuring appointment automation, WhatsApp integration, AI-powered patient communication, and secure clinic management APIs.
