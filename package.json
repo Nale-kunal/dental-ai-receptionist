@@ -22,10 +22,11 @@
     "db:inventory": "npm run db:inventory --workspace=apps/api"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "typescript": "5.9.3"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": "20.x",
     "npm": ">=9.0.0"
   }
 }
