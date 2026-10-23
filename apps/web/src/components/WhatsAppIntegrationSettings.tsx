@@ -290,10 +290,9 @@ export const WhatsAppIntegrationSettings: React.FC = () => {
         display: 'flex',
         flexDirection: 'column',
         gap: '16px',
-        maxWidth: '920px',
-        margin: '0 auto',
         width: '100%',
         paddingBottom: '24px',
+        boxSizing: 'border-box',
       }}
     >
       {/* ─── Top Header Card ───────────────────────────────────────────────── */}

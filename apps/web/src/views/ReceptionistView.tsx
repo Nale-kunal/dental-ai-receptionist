@@ -180,7 +180,7 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({ onOpenHandof
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minHeight: 0, height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minHeight: 0, height: '100%', width: '100%' }}>
       {/* Sub-Tabs Selector */}
       <div
         style={{
@@ -189,6 +189,8 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({ onOpenHandof
           borderBottom: '1px solid var(--border-subtle)',
           paddingBottom: '10px',
           flexShrink: 0,
+          width: '100%',
+          flexWrap: 'wrap',
         }}
       >
         <button
@@ -259,13 +261,14 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({ onOpenHandof
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '320px 1fr',
+            gridTemplateColumns: 'minmax(280px, 320px) 1fr',
             backgroundColor: 'var(--bg-surface)',
             border: '1px solid var(--border-card)',
             borderRadius: 'var(--radius-lg)',
             boxShadow: 'var(--shadow-sm)',
             flex: 1,
             minHeight: 0,
+            width: '100%',
             overflow: 'hidden',
           }}
         >
@@ -754,165 +757,167 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({ onOpenHandof
         </div>
       ) : activeTab === 'settings' ? (
         /* Receptionist Behavior & Preferences Form */
-        <form
-          onSubmit={handleSaveSettings}
-          style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--border-card)',
-            borderRadius: '12px',
-            boxShadow: 'var(--shadow-sm)',
-            padding: '16px 20px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '14px',
-            maxWidth: '800px',
-            overflowY: 'auto',
-          }}
-        >
-          {loadingSettings ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Loading receptionist preferences...</div>
-          ) : settings ? (
-            <>
-              {/* Automated Answering Toggle */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 14px',
-                  backgroundColor: 'var(--bg-surface-secondary)',
-                  borderRadius: '10px',
-                  border: '1px solid var(--border-subtle)',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Automated Receptionist Answering
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                    When paused, incoming patient WhatsApp enquiries will be directed to human staff.
-                  </div>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={settings.enabled}
-                    onChange={(e) => setSettings({ ...settings, enabled: e.target.checked })}
-                    style={{ width: '18px', height: '18px', accentColor: 'var(--accent-primary)' }}
-                  />
-                  <span
-                    style={{
-                      marginLeft: '8px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      color: settings.enabled ? 'var(--success)' : 'var(--danger)',
-                    }}
-                  >
-                    {settings.enabled ? 'ACTIVE' : 'PAUSED'}
-                  </span>
-                </label>
-              </div>
-
-              {/* Welcome Message */}
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  Welcome Greeting Message
-                </label>
-                <textarea
-                  rows={3}
-                  value={settings.greetingMessage || ''}
-                  onChange={(e) => setSettings({ ...settings, greetingMessage: e.target.value })}
-                  placeholder="e.g. Hello! Welcome to our dental practice. How can I assist you with appointments or dental care today?"
-                  className="form-input"
-                  style={{ width: '100%', fontSize: '13px', lineHeight: '1.45', padding: '8px 12px' }}
-                />
-              </div>
-
-              {/* Tone & Emergency Phone */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                    Conversation Tone
-                  </label>
-                  <select
-                    value={settings.tone || 'professional'}
-                    onChange={(e) => setSettings({ ...settings, tone: e.target.value })}
-                    className="form-input"
-                    style={{ width: '100%', fontSize: '13px', height: '34px' }}
-                  >
-                    <option value="professional">Professional & Welcoming</option>
-                    <option value="empathetic">Empathetic & Gentle (Anxious Patients)</option>
-                    <option value="concise">Brief & Direct</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                    Urgent / Emergency Contact Phone
-                  </label>
-                  <input
-                    type="text"
-                    value={settings.emergencyPhone || ''}
-                    onChange={(e) => setSettings({ ...settings, emergencyPhone: e.target.value })}
-                    placeholder="+1 (555) 123-4567"
-                    className="form-input"
-                    style={{ width: '100%', fontSize: '13px', height: '34px' }}
-                  />
-                </div>
-              </div>
-
-              {/* Cancellation Policy */}
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  Cancellation & Rescheduling Information Given to Patients
-                </label>
-                <textarea
-                  rows={2}
-                  value={settings.cancellationPolicy || ''}
-                  onChange={(e) => setSettings({ ...settings, cancellationPolicy: e.target.value })}
-                  placeholder="e.g. Please provide at least 24 hours notice to change your appointment."
-                  className="form-input"
-                  style={{ width: '100%', fontSize: '13px', lineHeight: '1.45', padding: '8px 12px' }}
-                />
-              </div>
-
-              {/* Accepted Insurance Plans */}
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  Accepted Dental Insurance Information
-                </label>
-                <textarea
-                  rows={2}
-                  value={settings.acceptedInsurance || ''}
-                  onChange={(e) => setSettings({ ...settings, acceptedInsurance: e.target.value })}
-                  placeholder="e.g. We accept Delta Dental, MetLife, Cigna PPO, and Guardian."
-                  className="form-input"
-                  style={{ width: '100%', fontSize: '13px', lineHeight: '1.45', padding: '8px 12px' }}
-                />
-              </div>
-
-              {/* Save Button */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
-                <button
-                  type="submit"
-                  disabled={savingSettings}
-                  className="btn btn-primary"
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', width: '100%' }}>
+          <form
+            onSubmit={handleSaveSettings}
+            style={{
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-card)',
+              borderRadius: 'var(--radius-lg)',
+              boxShadow: 'var(--shadow-sm)',
+              padding: '18px 20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '14px',
+              width: '100%',
+              boxSizing: 'border-box',
+            }}
+          >
+            {loadingSettings ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Loading receptionist preferences...</div>
+            ) : settings ? (
+              <>
+                {/* Automated Answering Toggle */}
+                <div
                   style={{
-                    height: '32px',
-                    padding: '0 16px',
-                    fontSize: '13px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    backgroundColor: 'var(--bg-surface-secondary)',
+                    borderRadius: '10px',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
-                  <Save size={14} />
-                  {savingSettings ? 'Saving...' : 'Save Receptionist Preferences'}
-                </button>
-              </div>
-            </>
-          ) : null}
-        </form>
+                  <div>
+                    <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Automated Receptionist Answering
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      When paused, incoming patient WhatsApp enquiries will be directed to human staff.
+                    </div>
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={settings.enabled}
+                      onChange={(e) => setSettings({ ...settings, enabled: e.target.checked })}
+                      style={{ width: '18px', height: '18px', accentColor: 'var(--accent-primary)' }}
+                    />
+                    <span
+                      style={{
+                        marginLeft: '8px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        color: settings.enabled ? 'var(--success)' : 'var(--danger)',
+                      }}
+                    >
+                      {settings.enabled ? 'ACTIVE' : 'PAUSED'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Welcome Message */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Welcome Greeting Message
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={settings.greetingMessage || ''}
+                    onChange={(e) => setSettings({ ...settings, greetingMessage: e.target.value })}
+                    placeholder="e.g. Hello! Welcome to our dental practice. How can I assist you with appointments or dental care today?"
+                    className="form-input"
+                    style={{ width: '100%', fontSize: '13px', lineHeight: '1.45', padding: '8px 12px' }}
+                  />
+                </div>
+
+                {/* Tone & Emergency Phone */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      Conversation Tone
+                    </label>
+                    <select
+                      value={settings.tone || 'professional'}
+                      onChange={(e) => setSettings({ ...settings, tone: e.target.value })}
+                      className="form-input"
+                      style={{ width: '100%', fontSize: '13px', height: '34px' }}
+                    >
+                      <option value="professional">Professional & Welcoming</option>
+                      <option value="empathetic">Empathetic & Gentle (Anxious Patients)</option>
+                      <option value="concise">Brief & Direct</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      Urgent / Emergency Contact Phone
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.emergencyPhone || ''}
+                      onChange={(e) => setSettings({ ...settings, emergencyPhone: e.target.value })}
+                      placeholder="+1 (555) 123-4567"
+                      className="form-input"
+                      style={{ width: '100%', fontSize: '13px', height: '34px' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Cancellation Policy */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Cancellation & Rescheduling Information Given to Patients
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={settings.cancellationPolicy || ''}
+                    onChange={(e) => setSettings({ ...settings, cancellationPolicy: e.target.value })}
+                    placeholder="e.g. Please provide at least 24 hours notice to change your appointment."
+                    className="form-input"
+                    style={{ width: '100%', fontSize: '13px', lineHeight: '1.45', padding: '8px 12px' }}
+                  />
+                </div>
+
+                {/* Accepted Insurance Plans */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    Accepted Dental Insurance Information
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={settings.acceptedInsurance || ''}
+                    onChange={(e) => setSettings({ ...settings, acceptedInsurance: e.target.value })}
+                    placeholder="e.g. We accept Delta Dental, MetLife, Cigna PPO, and Guardian."
+                    className="form-input"
+                    style={{ width: '100%', fontSize: '13px', lineHeight: '1.45', padding: '8px 12px' }}
+                  />
+                </div>
+
+                {/* Save Button */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <button
+                    type="submit"
+                    disabled={savingSettings}
+                    className="btn btn-primary"
+                    style={{
+                      height: '32px',
+                      padding: '0 16px',
+                      fontSize: '13px',
+                    }}
+                  >
+                    <Save size={14} />
+                    {savingSettings ? 'Saving...' : 'Save Receptionist Preferences'}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </form>
+        </div>
       ) : (
         /* Dedicated WhatsApp Cloud API Integration View */
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '4px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', width: '100%' }}>
           <WhatsAppIntegrationSettings />
         </div>
       )}
