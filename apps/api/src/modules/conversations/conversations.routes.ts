@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '../../config/env';
 import { authenticate } from '../../middleware/authentication/authenticate';
 import { prisma } from '../../database/prisma/client';
-import { getAuthenticatedClinicId } from '../../middleware/authorization/tenantScope';
+import { getAuthenticatedClinicId, isValidUuid } from '../../middleware/authorization/tenantScope';
 import { sendSuccess, sendUnauthorized, sendError } from '../../utils/response';
 import { NotFoundError } from '../../middleware/errors/errorHandler';
 import { DEFAULT_PAGE_SIZE } from '@dental/shared';
@@ -176,7 +176,16 @@ conversationsRouter.get('/stream', async (req, res, next) => {
     }
   };
 
+  const onDeleted = (payload: any) => {
+    try {
+      res.write(`event: conversation_deleted\ndata: ${JSON.stringify(payload)}\n\n`);
+    } catch {
+      // client disconnected
+    }
+  };
+
   conversationEvents.on(`message:${clinicId}`, onEvent);
+  conversationEvents.on(`conversation:deleted:${clinicId}`, onDeleted);
 
   // Background polling check to detect inbound messages inserted by n8n or external webhooks
   const pollInterval = setInterval(async () => {
@@ -248,6 +257,7 @@ conversationsRouter.get('/stream', async (req, res, next) => {
     clearInterval(pollInterval);
     clearInterval(heartbeatInterval);
     conversationEvents.off(`message:${clinicId}`, onEvent);
+    conversationEvents.off(`conversation:deleted:${clinicId}`, onDeleted);
     res.end();
   });
 });
@@ -745,3 +755,69 @@ conversationsRouter.post('/:id/messages', async (req, res, next) => {
     sendSuccess(res, resultPayload, 'Message sent successfully');
   } catch (e) { next(e); }
 });
+
+/**
+ * DELETE /api/v1/conversations/:id
+ * Permanently deletes a conversation and its message transcript from PostgreSQL.
+ * Strict clinic/tenant isolation is enforced in the database query itself:
+ * WHERE id = $1::uuid AND clinic_id = $2::uuid.
+ * Preserves all patient records, booked appointments, and audit history.
+ * Detaches handoffs and notifications by setting conversation_id = NULL.
+ * Emits real-time SSE event to notify other clients in the same clinic.
+ */
+conversationsRouter.delete('/:id', async (req, res, next) => {
+  try {
+    const clinicId = getAuthenticatedClinicId(req);
+    const conversationId = req.params.id;
+
+    if (!isValidUuid(conversationId)) {
+      return sendError(res, 'VALIDATION', 'Invalid conversation ID format', 400);
+    }
+
+    const deleted = await prisma.$transaction(async (tx) => {
+      // 1. Detach audit records (handoffs, notifications) so their clinical history is preserved
+      await tx.$executeRawUnsafe(
+        `UPDATE api.handoffs SET conversation_id = NULL WHERE conversation_id = $1::uuid AND clinic_id = $2::uuid`,
+        conversationId,
+        clinicId
+      );
+      await tx.$executeRawUnsafe(
+        `UPDATE api.notifications SET conversation_id = NULL WHERE conversation_id = $1::uuid AND clinic_id = $2::uuid`,
+        conversationId,
+        clinicId
+      );
+      // 2. Delete messages transcript associated with this conversation
+      await tx.$executeRawUnsafe(
+        `DELETE FROM api.messages WHERE conversation_id = $1::uuid AND clinic_id = $2::uuid`,
+        conversationId,
+        clinicId
+      );
+      // 3. Delete the conversation permanently with strict clinic/tenant isolation
+      const rows = await tx.$queryRawUnsafe<any[]>(
+        `DELETE FROM api.conversations WHERE id = $1::uuid AND clinic_id = $2::uuid RETURNING id`,
+        conversationId,
+        clinicId
+      );
+      return rows;
+    });
+
+    if (!deleted || deleted.length === 0) {
+      return sendError(res, 'NOT_FOUND', 'Conversation not found', 404);
+    }
+
+    // Broadcast conversation deletion to active SSE clients in this clinic
+    conversationEvents.emit(`conversation:deleted:${clinicId}`, {
+      conversationId,
+    });
+
+    sendSuccess(res, { id: conversationId, deleted: true }, 'Conversation deleted successfully');
+  } catch (err: any) {
+    logger.error('Failed to delete conversation', {
+      error: err?.message || String(err),
+      clinicId: req.user?.clinicId,
+      conversationId: req.params.id,
+    });
+    next(err);
+  }
+});
+

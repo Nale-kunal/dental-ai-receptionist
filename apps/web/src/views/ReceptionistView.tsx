@@ -16,8 +16,10 @@ import {
   Send,
   Archive,
   Radio,
+  Trash2,
 } from 'lucide-react';
 import { WhatsAppIntegrationSettings } from '../components/WhatsAppIntegrationSettings';
+import { DeleteConversationModal } from '../components/modals/DeleteConversationModal';
 
 export type ReceptionistTab = 'chats' | 'settings' | 'integration';
 
@@ -59,6 +61,17 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const lastSyncTimestampRef = React.useRef<string>(new Date().toISOString());
 
+  // Track selectedConversationId in ref to prevent stale closures and effect churn
+  const selectedConversationIdRef = React.useRef<string | null>(selectedConversationId);
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  // Delete conversation confirmation modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [conversationToDelete, setConversationToDelete] = useState<any | null>(null);
+  const [isDeletingConversation, setIsDeletingConversation] = useState(false);
+
   // Settings state
   const [settings, setSettings] = useState<any>(null);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -66,29 +79,32 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
 
   // Notify parent of conversation selection for route synchronization
   useEffect(() => {
-    if (selectedConversationId && onConversationSelect) {
-      onConversationSelect(selectedConversationId);
+    if (onConversationSelect) {
+      onConversationSelect(selectedConversationId || '');
     }
   }, [selectedConversationId, onConversationSelect]);
 
   // Load conversations
-  const loadConversations = useCallback(async (preserveId?: string) => {
+  const loadConversations = useCallback(async (preserveId?: string, silent?: boolean) => {
     try {
-      setLoadingConversations(true);
+      if (!silent) setLoadingConversations(true);
       const res = await api.getConversations({ pageSize: 40 });
       setConversations(res.items || []);
-      const targetId = preserveId || selectedConversationId || initialConversationId;
+      const currentSelected = selectedConversationIdRef.current;
+      const targetId = preserveId || currentSelected || initialConversationId;
       if (targetId && res.items?.some((c: any) => c.id === targetId)) {
-        setSelectedConversationId(targetId);
-      } else if (res.items && res.items.length > 0 && !selectedConversationId) {
+        if (targetId !== currentSelected) {
+          setSelectedConversationId(targetId);
+        }
+      } else if (res.items && res.items.length > 0 && !currentSelected) {
         setSelectedConversationId(res.items[0].id);
       }
     } catch (err: any) {
       toast.error('Unable to load conversations', err.message);
     } finally {
-      setLoadingConversations(false);
+      if (!silent) setLoadingConversations(false);
     }
-  }, [selectedConversationId, initialConversationId, toast]);
+  }, [initialConversationId, toast]);
 
   // Load selected chat messages
   const loadChat = useCallback(async (id: string) => {
@@ -110,7 +126,10 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
   }, [loadConversations]);
 
   useEffect(() => {
-    if (!selectedConversationId) return;
+    if (!selectedConversationId) {
+      setSelectedChat(null);
+      return;
+    }
     loadChat(selectedConversationId);
   }, [selectedConversationId, loadChat]);
 
@@ -147,8 +166,8 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
             setConversations((prev) => {
               const idx = prev.findIndex((c) => c.id === conversationId);
               if (idx === -1) {
-                // New conversation arrived: reload list
-                loadConversations(selectedConversationId || undefined);
+                // New conversation arrived: silently refresh list
+                loadConversations(selectedConversationIdRef.current || undefined, true);
                 return prev;
               }
               const updated = [...prev];
@@ -191,6 +210,35 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
           }
         });
 
+        es.addEventListener('conversation_deleted', (e: MessageEvent) => {
+          if (isDisposed || !e.data) return;
+          try {
+            const data = JSON.parse(e.data);
+            const { conversationId } = data;
+            if (!conversationId) return;
+
+            // Immediately clear active chat if it matches the deleted conversation
+            setSelectedChat((prevChat: any) => {
+              if (!prevChat) return null;
+              const currentChatId = prevChat.id || prevChat.conversation?.id;
+              if (currentChatId === conversationId) return null;
+              return prevChat;
+            });
+
+            setConversations((prev) => {
+              const remaining = prev.filter((c) => c.id !== conversationId);
+              if (selectedConversationIdRef.current === conversationId) {
+                const nextId = remaining[0]?.id || null;
+                selectedConversationIdRef.current = nextId;
+                setSelectedConversationId(nextId);
+              }
+              return remaining;
+            });
+          } catch (err) {
+            console.warn('Error processing conversation_deleted event:', err);
+          }
+        });
+
         es.onerror = () => {
           if (isDisposed) return;
           setRealtimeConnected(false);
@@ -209,7 +257,8 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
     const handleVisibilityChange = async () => {
       if (document.visibilityState === 'visible' && !isDisposed) {
         try {
-          const syncRes = await api.syncConversations(lastSyncTimestampRef.current, selectedConversationId || undefined);
+          const currentSelected = selectedConversationIdRef.current;
+          const syncRes = await api.syncConversations(lastSyncTimestampRef.current, currentSelected || undefined);
           if (syncRes.messages && syncRes.messages.length > 0) {
             lastSyncTimestampRef.current = syncRes.serverTime || new Date().toISOString();
             syncRes.messages.forEach((msg) => {
@@ -218,14 +267,14 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                 const currentChatId = prevChat.id || prevChat.conversation?.id;
                 if (currentChatId !== msg.conversationId) return prevChat;
                 const currentMsgs = prevChat.messages || prevChat.conversation?.messages || [];
-                if (currentMsgs.some((m: any) => m.id === msg.id)) return prevChat;
+                if (currentMsgs.some((m: any) => m.id === msg.id || (msg.providerMessageId && m.providerMessageId === msg.providerMessageId))) return prevChat;
                 return {
                   ...prevChat,
                   messages: [...currentMsgs, msg],
                 };
               });
             });
-            loadConversations(selectedConversationId || undefined);
+            loadConversations(currentSelected || undefined, true);
           }
         } catch {
           // ignore transient sync error
@@ -241,7 +290,7 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
       if (reconnectTimer) clearTimeout(reconnectTimer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [selectedConversationId, loadConversations]);
+  }, [loadConversations]);
 
   // Scroll messages to bottom when chat loads or message sent
   useEffect(() => {
@@ -251,8 +300,8 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
   }, [selectedChat]);
 
   // Send staff reply to the patient
-  const handleSendReply = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  const handleSendReply = async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
     if (!selectedConversationId || !replyText.trim() || sendingReply) return;
 
     const trimmed = replyText.trim();
@@ -268,18 +317,49 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
       setReplyText('');
       setResolveHandoffOnSend(false);
 
-      // Append new message to transcript immediately
-      setSelectedChat((prev: any) => {
-        if (!prev) return prev;
-        const currentMsgs = prev.messages || prev.conversation?.messages || [];
+      // Append new message to transcript immediately with deduplication
+      setSelectedChat((prevChat: any) => {
+        if (!prevChat) return prevChat;
+        const currentChatId = prevChat.id || prevChat.conversation?.id;
+        if (currentChatId !== selectedConversationId) return prevChat;
+
+        const currentMsgs = prevChat.messages || prevChat.conversation?.messages || [];
+        const exists = currentMsgs.some((m: any) =>
+          m.id === res.id ||
+          (res.providerMessageId && m.providerMessageId === res.providerMessageId)
+        );
+        if (exists) return prevChat;
+
+        const updatedMsgs = [...currentMsgs, res];
         return {
-          ...prev,
-          messages: [...currentMsgs, res],
+          ...prevChat,
+          messages: updatedMsgs,
+          conversation: {
+            ...(prevChat.conversation || prevChat),
+            messages: updatedMsgs,
+            lastMessageAt: res.createdAt,
+            lastMessageBody: res.body,
+          },
         };
       });
 
-      // Reload conversations list to update message count and preview
-      loadConversations();
+      // Update conversations list in-place immediately without triggering a full loading reload
+      setConversations((prev) => {
+        const idx = prev.findIndex((c) => c.id === selectedConversationId);
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        const conv = { ...updated[idx] };
+        conv.lastMessageBody = trimmed;
+        conv.lastMessageAt = res.createdAt || new Date().toISOString();
+        conv.messageCount = (conv.messageCount || 0) + 1;
+        if (resolveHandoffOnSend) {
+          conv.handoffStatus = 'resolved';
+          conv.state = 'active';
+        }
+        updated.splice(idx, 1);
+        updated.unshift(conv);
+        return updated;
+      });
     } catch (err: any) {
       toast.error('Send Failed', err.message || 'Unable to send message reply.');
     } finally {
@@ -287,11 +367,52 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
     }
   };
 
+  const handleOpenDeleteModal = (conv: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setConversationToDelete(conv);
+    setDeleteModalOpen(true);
+  };
+
+  const handleConfirmDeleteConversation = async () => {
+    if (!conversationToDelete || isDeletingConversation) return;
+    const targetId = conversationToDelete.id;
+    setIsDeletingConversation(true);
+    try {
+      await api.deleteConversation(targetId);
+      toast.success('Conversation Deleted', 'The conversation thread has been permanently removed.');
+
+      // Immediately clear active chat if it matches the deleted conversation
+      setSelectedChat((prevChat: any) => {
+        if (!prevChat) return null;
+        const currentChatId = prevChat.id || prevChat.conversation?.id;
+        if (currentChatId === targetId) return null;
+        return prevChat;
+      });
+
+      setConversations((prev) => {
+        const remaining = prev.filter((c) => c.id !== targetId);
+        if (selectedConversationIdRef.current === targetId) {
+          const nextId = remaining[0]?.id || null;
+          selectedConversationIdRef.current = nextId;
+          setSelectedConversationId(nextId);
+        }
+        return remaining;
+      });
+
+      setDeleteModalOpen(false);
+      setConversationToDelete(null);
+    } catch (err: any) {
+      toast.error('Deletion Failed', err.message || 'Unable to delete conversation.');
+    } finally {
+      setIsDeletingConversation(false);
+    }
+  };
+
   const handleCloseConversation = async (conversationId: string) => {
     try {
       await api.closeConversation(conversationId, 'staff_manual_close');
       toast.success('Conversation Closed', 'This conversation thread has been archived. A future patient message will begin a new thread according to policy.');
-      loadConversations();
+      loadConversations(conversationId, true);
       loadChat(conversationId);
     } catch (err: any) {
       toast.error('Close Failed', err.message || 'Unable to close conversation.');
@@ -505,9 +626,40 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                         <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '12.5px' }}>
                           {patientName}
                         </div>
-                        <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
-                          {formatTime(c.lastActivity || c.lastMessageAt || c.updatedAt || c.createdAt)}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
+                            {formatTime(c.lastActivity || c.lastMessageAt || c.updatedAt || c.createdAt)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenDeleteModal(c, e)}
+                            title="Delete conversation permanently"
+                            aria-label={`Delete conversation with ${patientName}`}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              padding: '2px 4px',
+                              borderRadius: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              lineHeight: 1,
+                              transition: 'color 0.15s ease, background-color 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.color = 'var(--danger)';
+                              e.currentTarget.style.backgroundColor = 'var(--danger-subtle)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.color = 'var(--text-muted)';
+                              e.currentTarget.style.backgroundColor = 'transparent';
+                            }}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
                       </div>
 
                       <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
@@ -618,6 +770,24 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                       </p>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDeleteModal(conv)}
+                        className="btn btn-secondary btn-sm"
+                        style={{
+                          height: '28px',
+                          padding: '0 10px',
+                          fontSize: '12px',
+                          color: 'var(--danger)',
+                          borderColor: 'rgba(239, 68, 68, 0.3)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                        }}
+                        title="Permanently delete this conversation from PostgreSQL"
+                      >
+                        <Trash2 size={13} /> Delete
+                      </button>
                       {!conv.closedAt && (
                         <button
                           onClick={() => handleCloseConversation(conv.id)}
@@ -789,8 +959,9 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                   </div>
 
                   {/* Message Composer */}
-                  <form
-                    onSubmit={handleSendReply}
+                  <div
+                    role="region"
+                    aria-label="Message Composer"
                     style={{
                       flexShrink: 0,
                       padding: '10px 16px',
@@ -823,7 +994,8 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                         }}
                       />
                       <button
-                        type="submit"
+                        type="button"
+                        onClick={handleSendReply}
                         disabled={sendingReply || !replyText.trim()}
                         className="btn btn-primary"
                         style={{
@@ -889,7 +1061,7 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                         </button>
                       </div>
                     </div>
-                  </form>
+                  </div>
                 </ErrorBoundary>
               );
             })() : (
@@ -1075,6 +1247,20 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
           <WhatsAppIntegrationSettings />
         </div>
       )}
+
+      {/* Delete Conversation Confirmation Dialog */}
+      <DeleteConversationModal
+        isOpen={deleteModalOpen}
+        conversation={conversationToDelete}
+        onClose={() => {
+          if (!isDeletingConversation) {
+            setDeleteModalOpen(false);
+            setConversationToDelete(null);
+          }
+        }}
+        onConfirm={handleConfirmDeleteConversation}
+        isDeleting={isDeletingConversation}
+      />
     </div>
   );
 };

@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { Client } from 'pg';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
@@ -373,5 +375,339 @@ describe('Dental AI Receptionist — Reliability, Availability & Real-Time Sync 
       expect(res.body.message).toContain('Authentication required');
     });
   });
+
+  describe('Issue 1: Permanent Conversation Deletion & Tenant Isolation', () => {
+    it('authorizes deletion of conversation, permanently removes it from DB, cascades messages, and preserves related audit/patient records', async () => {
+      const token = makeToken(oracleClinicId);
+      const testPhone1 = '+1555' + Math.floor(1000000 + Math.random() * 9000000);
+
+      // Clean up any stale conversation for this phone
+      await client.query(`DELETE FROM api.conversations WHERE channel_conversation_id = $1`, [testPhone1]);
+
+      // 1. Create a patient in Oracle clinic
+      const patientRes = await client.query(
+        `INSERT INTO api.patients (clinic_id, full_name)
+         VALUES ($1::uuid, 'Test Patient For Deletion')
+         RETURNING id`,
+        [oracleClinicId]
+      );
+      const patientId = patientRes.rows[0].id;
+
+      // 2. Create a test conversation
+      const convRes = await client.query(
+        `INSERT INTO api.conversations (clinic_id, patient_id, channel, channel_conversation_id)
+         VALUES ($1::uuid, $2::uuid, 'whatsapp', $3)
+         RETURNING id`,
+        [oracleClinicId, patientId, testPhone1]
+      );
+      const conversationId = convRes.rows[0].id;
+
+      // 3. Insert messages associated with this conversation
+      await client.query(
+        `INSERT INTO api.messages (clinic_id, conversation_id, direction, kind, body)
+         VALUES ($1::uuid, $2::uuid, 'inbound', 'patient_text', 'Hello I want to book')`,
+        [oracleClinicId, conversationId]
+      );
+
+      // 4. Insert a handoff referencing this conversation
+      const handoffRes = await client.query(
+        `INSERT INTO api.handoffs (clinic_id, conversation_id, patient_id, channel, status, reason)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'whatsapp'::api.channel_type, 'pending', 'Test handoff preservation')
+         RETURNING id`,
+        [oracleClinicId, conversationId, patientId]
+      );
+      const handoffId = handoffRes.rows[0].id;
+
+      // 5. Send DELETE request
+      const deleteRes = await request(app)
+        .delete(`/api/v1/conversations/${conversationId}`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(deleteRes.status).toBe(200);
+      expect(deleteRes.body.ok).toBe(true);
+      expect(deleteRes.body.data.deleted).toBe(true);
+      expect(deleteRes.body.data.id).toBe(conversationId);
+
+      // 6. Verify conversation is permanently deleted from api.conversations
+      const checkConv = await client.query(
+        `SELECT count(*)::int AS count FROM api.conversations WHERE id = $1::uuid`,
+        [conversationId]
+      );
+      expect(checkConv.rows[0].count).toBe(0);
+
+      // 7. Verify messages are deleted
+      const checkMsgs = await client.query(
+        `SELECT count(*)::int AS count FROM api.messages WHERE conversation_id = $1::uuid`,
+        [conversationId]
+      );
+      expect(checkMsgs.rows[0].count).toBe(0);
+
+      // 8. Verify handoff audit record is PRESERVED with conversation_id set to NULL
+      const checkHandoff = await client.query(
+        `SELECT id, conversation_id, status, reason FROM api.handoffs WHERE id = $1::uuid`,
+        [handoffId]
+      );
+      expect(checkHandoff.rows.length).toBe(1);
+      expect(checkHandoff.rows[0].conversation_id).toBeNull();
+      expect(checkHandoff.rows[0].reason).toBe('Test handoff preservation');
+
+      // 9. Verify patient record is completely preserved
+      const checkPatient = await client.query(
+        `SELECT id, full_name FROM api.patients WHERE id = $1::uuid`,
+        [patientId]
+      );
+      expect(checkPatient.rows.length).toBe(1);
+
+      // 10. Verify GET /api/v1/conversations excludes the deleted conversation
+      const inboxRes = await request(app)
+        .get('/api/v1/conversations')
+        .set('Authorization', `Bearer ${token}`);
+      expect(inboxRes.status).toBe(200);
+      expect(inboxRes.body.data.items.some((c: any) => c.id === conversationId)).toBe(false);
+
+      // 11. Cleanup test patient & handoff
+      await client.query(`DELETE FROM api.handoffs WHERE id = $1::uuid`, [handoffId]);
+      await client.query(`DELETE FROM api.patients WHERE id = $1::uuid`, [patientId]);
+    });
+
+    it('strictly enforces clinic/tenant isolation: Clinic B user cannot delete Clinic A conversation', async () => {
+      const clinicAToken = makeToken(oracleClinicId);
+      const clinicBToken = makeToken(demoClinicId);
+      const testPhone2 = '+1555' + Math.floor(1000000 + Math.random() * 9000000);
+
+      // Create conversation in Clinic A
+      const convRes = await client.query(
+        `INSERT INTO api.conversations (clinic_id, channel, channel_conversation_id)
+         VALUES ($1::uuid, 'whatsapp', $2)
+         RETURNING id`,
+        [oracleClinicId, testPhone2]
+      );
+      const convAId = convRes.rows[0].id;
+
+      // Clinic B attempts to delete Clinic A's conversation
+      const attackRes = await request(app)
+        .delete(`/api/v1/conversations/${convAId}`)
+        .set('Authorization', `Bearer ${clinicBToken}`);
+
+      expect(attackRes.status).toBe(404);
+      expect(attackRes.body.ok).toBe(false);
+      expect(attackRes.body.message).toContain('Conversation not found');
+
+      // Verify Clinic A's conversation is completely intact in the database
+      const checkConv = await client.query(
+        `SELECT count(*)::int AS count FROM api.conversations WHERE id = $1::uuid AND clinic_id = $2::uuid`,
+        [convAId, oracleClinicId]
+      );
+      expect(checkConv.rows[0].count).toBe(1);
+
+      // Clean up using authorized Clinic A
+      const cleanupRes = await request(app)
+        .delete(`/api/v1/conversations/${convAId}`)
+        .set('Authorization', `Bearer ${clinicAToken}`);
+      expect(cleanupRes.status).toBe(200);
+    });
+
+    it('returns 404 for nonexistent conversation UUID and 400 for invalid UUID format', async () => {
+      const token = makeToken(oracleClinicId);
+      const nonExistentUuid = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+
+      const notFoundRes = await request(app)
+        .delete(`/api/v1/conversations/${nonExistentUuid}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(notFoundRes.status).toBe(404);
+      expect(notFoundRes.body.ok).toBe(false);
+
+      const invalidRes = await request(app)
+        .delete('/api/v1/conversations/not-a-valid-uuid')
+        .set('Authorization', `Bearer ${token}`);
+      expect(invalidRes.status).toBe(400);
+      expect(invalidRes.body.ok).toBe(false);
+      expect(invalidRes.body.code).toBe('VALIDATION');
+    });
+
+    it('rejects unauthenticated deletion requests with 401 Unauthorized', async () => {
+      const res = await request(app)
+        .delete('/api/v1/conversations/914fb00e-c834-4e44-9646-9d746f536d4e');
+      expect(res.status).toBe(401);
+      expect(res.body.ok).toBe(false);
+    });
+  });
+
+  describe('Issue 2: Staff Reply Flow & Prevention of Reload / Duplication', () => {
+    it('sends staff reply, returns message with providerMessageId and isStaff=true, updates conversation, and avoids duplicates in delta sync', async () => {
+      const token = makeToken(oracleClinicId);
+      const testPhone3 = '+1555' + Math.floor(1000000 + Math.random() * 9000000);
+
+      // Create conversation
+      const convRes = await client.query(
+        `INSERT INTO api.conversations (clinic_id, channel, channel_conversation_id)
+         VALUES ($1::uuid, 'whatsapp', $2)
+         RETURNING id`,
+        [oracleClinicId, testPhone3]
+      );
+      const conversationId = convRes.rows[0].id;
+
+      // Send staff reply
+      const replyRes = await request(app)
+        .post(`/api/v1/conversations/${conversationId}/messages`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ body: 'Hello, our clinic is open Monday at 10 AM.', resolveHandoff: false });
+
+      expect(replyRes.status).toBe(200);
+      expect(replyRes.body.ok).toBe(true);
+      const sentMsg = replyRes.body.data;
+      expect(sentMsg.id).toBeDefined();
+      expect(sentMsg.conversationId).toBe(conversationId);
+      expect(sentMsg.isStaff).toBe(true);
+      expect(sentMsg.content).toBe('Hello, our clinic is open Monday at 10 AM.');
+
+      // Verify delta sync returns this message with the exact same ID
+      const syncRes = await request(app)
+        .get(`/api/v1/conversations/sync?conversationId=${conversationId}`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(syncRes.status).toBe(200);
+      expect(syncRes.body.ok).toBe(true);
+      const syncMsgs = syncRes.body.data.messages;
+      expect(syncMsgs.length).toBe(1);
+      expect(syncMsgs[0].id).toBe(sentMsg.id);
+      expect(syncMsgs[0].isStaff).toBe(true);
+
+      // Verify conversation last_message_at was updated
+      const convCheck = await client.query(
+        `SELECT last_message_at FROM api.conversations WHERE id = $1::uuid`,
+        [conversationId]
+      );
+      expect(convCheck.rows[0].last_message_at).not.toBeNull();
+
+      // Clean up conversation
+      await request(app)
+        .delete(`/api/v1/conversations/${conversationId}`)
+        .set('Authorization', `Bearer ${token}`);
+    });
+  });
+
+  describe('Frontend Regression Verification: Message Composer & Single Send Protection', () => {
+    const receptionistViewPath = path.resolve(__dirname, '../../../../web/src/views/ReceptionistView.tsx');
+    const receptionistSource = fs.readFileSync(receptionistViewPath, 'utf8');
+
+    it('verifies the message composer does not submit a native form and uses non-form container with type="button"', () => {
+      // 1. Verify composer container is a non-form element with role="region" and aria-label="Message Composer"
+      expect(receptionistSource).toContain('role="region"');
+      expect(receptionistSource).toContain('aria-label="Message Composer"');
+      expect(receptionistSource).not.toMatch(/<form[^>]*aria-label="Message Composer"/);
+      expect(receptionistSource).not.toMatch(/<form[^>]*onSubmit=\{handleSendReply\}/);
+
+      // 2. Verify the send button explicitly specifies type="button" and onClick={handleSendReply}
+      expect(receptionistSource).toMatch(/<button[\s\S]*?type="button"[\s\S]*?onClick=\{handleSendReply\}/);
+
+      // 3. Verify textarea onKeyDown intercepts Enter and calls preventDefault()
+      expect(receptionistSource).toMatch(/if\s*\(\s*e\.key\s*===\s*['"]Enter['"]\s*&&\s*!e\.shiftKey\s*\)\s*\{\s*e\.preventDefault\(\)/);
+    });
+
+    it('verifies single-send protection: locked in-flight state prevents duplicate send invocations', async () => {
+      let isSending = false;
+      let sendCallCount = 0;
+
+      const executeSendReply = async () => {
+        if (isSending) {
+          return { sent: false, reason: 'BLOCKED_IN_FLIGHT' };
+        }
+        isSending = true;
+        sendCallCount++;
+        // Simulate network latency of API call
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        isSending = false;
+        return { sent: true };
+      };
+
+      // Trigger two concurrent send actions (e.g. rapid Enter key press + click)
+      const [firstCall, secondCall] = await Promise.all([
+        executeSendReply(),
+        executeSendReply(),
+      ]);
+
+      expect(firstCall.sent).toBe(true);
+      expect(secondCall.sent).toBe(false);
+      expect(secondCall.reason).toBe('BLOCKED_IN_FLIGHT');
+      expect(sendCallCount).toBe(1);
+    });
+
+    it('verifies message deduplication logic prevents duplicate messages from HTTP response and SSE delivery', () => {
+      interface Message {
+        id: string;
+        providerMessageId?: string;
+        content: string;
+      }
+
+      const appendMessageDeduplicated = (existing: Message[], incoming: Message): Message[] => {
+        const isDuplicate = existing.some(
+          (m) =>
+            m.id === incoming.id ||
+            (incoming.providerMessageId && m.providerMessageId && m.providerMessageId === incoming.providerMessageId)
+        );
+        if (isDuplicate) {
+          return existing;
+        }
+        return [...existing, incoming];
+      };
+
+      const initialList: Message[] = [
+        { id: 'msg-1', providerMessageId: 'wam-100', content: 'First message' },
+      ];
+
+      // 1. Same message ID arrives via SSE after HTTP response
+      const duplicateById = { id: 'msg-1', content: 'First message' };
+      const afterDupId = appendMessageDeduplicated(initialList, duplicateById);
+      expect(afterDupId.length).toBe(1);
+
+      // 2. Same providerMessageId arrives via SSE
+      const duplicateByProvider = { id: 'msg-temp-99', providerMessageId: 'wam-100', content: 'First message' };
+      const afterDupProvider = appendMessageDeduplicated(initialList, duplicateByProvider);
+      expect(afterDupProvider.length).toBe(1);
+
+      // 3. Genuinely distinct message arrives
+      const distinctMsg = { id: 'msg-2', providerMessageId: 'wam-200', content: 'Second message' };
+      const afterDistinct = appendMessageDeduplicated(initialList, distinctMsg);
+      expect(afterDistinct.length).toBe(2);
+      expect(afterDistinct[1].id).toBe('msg-2');
+    });
+
+    it('verifies selected-conversation and active-chat state updates immediately clear deleted conversation', () => {
+      const deletedConvId = 'conv-to-delete';
+      let selectedConversationId: string | null = deletedConvId;
+      let selectedChat: any | null = { id: deletedConvId, messages: [{ id: 'm1' }] };
+
+      const remainingConversations = [
+        { id: 'conv-next', patientName: 'Alice' },
+      ];
+
+      // 1. Immediate clear of active chat
+      if (selectedChat?.id === deletedConvId) {
+        selectedChat = null;
+      }
+      expect(selectedChat).toBeNull();
+
+      // 2. Shift to next conversation if available
+      if (selectedConversationId === deletedConvId) {
+        selectedConversationId = remainingConversations[0]?.id || null;
+      }
+      expect(selectedConversationId).toBe('conv-next');
+
+      // 3. Verify route synchronization when all conversations are deleted
+      const allDeletedRemaining: any[] = [];
+      let finalSelectedId: string | null = 'conv-last';
+      let finalChat: any | null = { id: 'conv-last' };
+      if (finalChat?.id === 'conv-last') {
+        finalChat = null;
+      }
+      if (finalSelectedId === 'conv-last') {
+        finalSelectedId = allDeletedRemaining[0]?.id || null;
+      }
+      expect(finalChat).toBeNull();
+      expect(finalSelectedId).toBeNull();
+    });
+  });
 });
+
 

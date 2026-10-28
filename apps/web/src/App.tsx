@@ -157,6 +157,25 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
     setHandoffModalOpen(true);
   };
 
+  const handleConversationSelect = useCallback((convId: string) => {
+    try {
+      if (convId) {
+        localStorage.setItem('dental_active_conversation_id', convId);
+        const url = new URL(window.location.href);
+        url.searchParams.set('tab', 'receptionist');
+        url.searchParams.set('conversationId', convId);
+        window.history.replaceState({}, '', url.toString());
+      } else {
+        localStorage.removeItem('dental_active_conversation_id');
+        const url = new URL(window.location.href);
+        url.searchParams.delete('conversationId');
+        window.history.replaceState({}, '', url.toString());
+      }
+    } catch {
+      // storage guard
+    }
+  }, []);
+
   const getSectionMetadata = () => {
     switch (activeTab) {
       case 'dashboard':
@@ -247,19 +266,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
                 onOpenHandoffModal={handleOpenHandoff}
                 initialTab={receptionistSubTab}
                 initialConversationId={new URLSearchParams(window.location.search).get('conversationId') || localStorage.getItem('dental_active_conversation_id') || undefined}
-                onConversationSelect={(convId) => {
-                  try {
-                    if (convId) {
-                      localStorage.setItem('dental_active_conversation_id', convId);
-                      const url = new URL(window.location.href);
-                      url.searchParams.set('tab', 'receptionist');
-                      url.searchParams.set('conversationId', convId);
-                      window.history.replaceState({}, '', url.toString());
-                    }
-                  } catch {
-                    // storage guard
-                  }
-                }}
+                onConversationSelect={handleConversationSelect}
               />
             )}
             {activeTab === 'schedules' && (

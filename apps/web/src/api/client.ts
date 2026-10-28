@@ -541,6 +541,7 @@ class ApiClient {
       deliveryStatus: string;
       providerStatus: string;
       providerMessage?: string;
+      providerMessageId?: string;
       createdAt: string;
       handoffResolved?: boolean;
     }>(`/conversations/${conversationId}/messages`, {
@@ -553,6 +554,12 @@ class ApiClient {
     return this.request<any>(`/conversations/${id}/close`, {
       method: 'PATCH',
       body: JSON.stringify({ reason }),
+    });
+  }
+
+  public async deleteConversation(id: string) {
+    return this.request<{ id: string; deleted: boolean }>(`/conversations/${id}`, {
+      method: 'DELETE',
     });
   }
 
