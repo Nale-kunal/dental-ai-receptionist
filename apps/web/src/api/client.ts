@@ -556,6 +556,30 @@ class ApiClient {
     });
   }
 
+  public async syncConversations(since?: string, conversationId?: string) {
+    const query = new URLSearchParams();
+    if (since) query.set('since', since);
+    if (conversationId) query.set('conversationId', conversationId);
+    const qs = query.toString();
+    return this.request<{
+      messages: any[];
+      serverTime: string;
+    }>(`/conversations/sync${qs ? `?${qs}` : ''}`);
+  }
+
+  public async getStreamTicket(): Promise<string> {
+    const res = await this.request<{ ticket: string }>('/conversations/stream-ticket', {
+      method: 'POST',
+    });
+    return res.ticket;
+  }
+
+  public getConversationStreamUrl(ticket?: string): string {
+    return ticket
+      ? `${API_BASE}/conversations/stream?ticket=${encodeURIComponent(ticket)}`
+      : `${API_BASE}/conversations/stream`;
+  }
+
   // --- Schedules ---
   public async getClinicHours() {
     return this.request<any[]>('/schedules/clinic');

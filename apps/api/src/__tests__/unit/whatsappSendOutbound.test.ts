@@ -73,9 +73,9 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
           idempotency_key: 'test_key_auth_valid',
         });
 
-      // Demo clinic is currently disabled (safe test mode), so auth passes and it returns 409 INTEGRATION_DISABLED
-      expect(res.status).toBe(409);
-      expect(res.body.code).toBe('INTEGRATION_DISABLED');
+      // Service key authentication passes (not 401); proceeds to request processing and returns 422 INTEGRATION_UNCONFIGURED for unconfigured demo clinic
+      expect(res.status).toBe(422);
+      expect(res.body.code).toBe('INTEGRATION_UNCONFIGURED');
     });
   });
 
@@ -150,20 +150,36 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
     });
 
     it('rejects disabled integration with 409 INTEGRATION_DISABLED (Safe Test Mode)', async () => {
-      const res = await request(app)
-        .post('/api/v1/integrations/whatsapp/send')
-        .set('X-Service-Key', testServiceKey)
-        .send({
-          clinic_id: demoClinicId, // demo clinic is enabled=false
-          recipient: '+15551234567',
-          message: 'Hello',
-          idempotency_key: 'test_disabled_key',
-        });
+      const disabledClinicId = '44444444-5555-6666-7777-888888888888';
+      try {
+        await pool.query(
+          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Disabled Clinic', 'disabled-clinic', 'America/New_York', 'en-US')`,
+          [disabledClinicId]
+        );
+        const enc = encryptSecret('test-token-value-12345');
+        await pool.query(
+          `INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, encrypted_access_token, key_version, enabled, status)
+           VALUES ($1, '4444444444444', $2, $3, false, 'valid')`,
+          [disabledClinicId, enc.ciphertext, enc.keyVersion]
+        );
 
-      expect(res.status).toBe(409);
-      expect(res.body.ok).toBe(false);
-      expect(res.body.code).toBe('INTEGRATION_DISABLED');
-      expect(res.body.data.delivery_status).toBe('logged_locally');
+        const res = await request(app)
+          .post('/api/v1/integrations/whatsapp/send')
+          .set('X-Service-Key', testServiceKey)
+          .send({
+            clinic_id: disabledClinicId,
+            recipient: '+15551234567',
+            message: 'Hello',
+            idempotency_key: 'test_disabled_key',
+          });
+
+        expect(res.status).toBe(409);
+        expect(res.body.ok).toBe(false);
+        expect(res.body.code).toBe('INTEGRATION_DISABLED');
+        expect(res.body.data.delivery_status).toBe('logged_locally');
+      } finally {
+        await pool.query(`DELETE FROM api.clinics WHERE id = $1`, [disabledClinicId]);
+      }
     });
 
     it('rejects unvalidated integration status with 422 INTEGRATION_NOT_ELIGIBLE', async () => {

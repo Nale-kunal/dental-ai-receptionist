@@ -37,16 +37,16 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
   });
 
   describe('GET /api/v1/receptionist/settings', () => {
-    it('returns canonical phoneNumberId for Demo Clinic without hardcoded defaults', async () => {
+    it('returns canonical phoneNumberId for Oracle Clinic without hardcoded defaults', async () => {
       const res = await request(app)
         .get('/api/v1/receptionist/settings')
-        .set('Authorization', `Bearer ${tokenClinicA}`);
+        .set('Authorization', `Bearer ${tokenClinicB}`);
 
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.data.phoneNumberId).toBe('1330570960147204');
       expect(res.body.data.whatsappPhoneNumberId).toBe('1330570960147204');
-      expect(res.body.data.greetingMessage).toContain('Demo Dental Clinic');
+      expect(res.body.data.greetingMessage).toContain('Oracle Clinic');
       // Must not expose any access token
       expect(res.body.data.accessToken).toBeUndefined();
       expect(res.body.data.meta_access_token).toBeUndefined();
@@ -55,22 +55,22 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
     it('returns empty phone number for unconfigured clinic without demo fallback', async () => {
       const res = await request(app)
         .get('/api/v1/receptionist/settings')
-        .set('Authorization', `Bearer ${tokenClinicB}`);
+        .set('Authorization', `Bearer ${tokenClinicA}`);
 
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.data.phoneNumberId).toBe('');
-      expect(res.body.data.greetingMessage).toContain('Oracle Clinic');
-      expect(res.body.data.emergencyPhone).toBe('');
+      expect(res.body.data.greetingMessage).toContain('Demo Dental Clinic');
+      expect(res.body.data.emergencyPhone).toBe('+15551234567');
     });
   });
 
   describe('PUT /api/v1/receptionist/settings', () => {
     it('rejects assigning an existing Phone Number ID with 409 Conflict', async () => {
-      // Clinic B attempts to claim Demo Clinic's phone number ID
+      // Clinic A attempts to claim Oracle Clinic's phone number ID
       const res = await request(app)
         .put('/api/v1/receptionist/settings')
-        .set('Authorization', `Bearer ${tokenClinicB}`)
+        .set('Authorization', `Bearer ${tokenClinicA}`)
         .send({
           phoneNumberId: '1330570960147204',
         });
@@ -99,11 +99,11 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
     it('returns masked integration status without revealing raw secrets', async () => {
       const res = await request(app)
         .get('/api/v1/receptionist/integration')
-        .set('Authorization', `Bearer ${tokenClinicA}`);
+        .set('Authorization', `Bearer ${tokenClinicB}`);
 
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
-      expect(res.body.data.clinicId).toBe(clinicA_Id);
+      expect(res.body.data.clinicId).toBe(clinicB_Id);
       expect(res.body.data.phoneNumberId).toBe('1330570960147204');
       expect(res.body.data.accessToken).toBeUndefined();
       expect(res.body.data.encryptedAccessToken).toBeUndefined();
@@ -157,21 +157,21 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
       }
     });
 
-    it('enforces tenant isolation: Clinic B cannot access Clinic A integration', async () => {
+    it('enforces tenant isolation: Clinic A cannot access Clinic B integration', async () => {
       const res = await request(app)
         .get('/api/v1/receptionist/integration')
-        .set('Authorization', `Bearer ${tokenClinicB}`);
+        .set('Authorization', `Bearer ${tokenClinicA}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.clinicId).toBe(clinicB_Id);
-      expect(res.body.data.clinicId).not.toBe(clinicA_Id);
+      expect(res.body.data.clinicId).toBe(clinicA_Id);
+      expect(res.body.data.clinicId).not.toBe(clinicB_Id);
       expect(res.body.data.phoneNumberId).toBeNull();
     });
 
     it('returns 400 UNCONFIGURED when validating an unconfigured clinic integration', async () => {
       const res = await request(app)
         .post('/api/v1/receptionist/integration/validate')
-        .set('Authorization', `Bearer ${tokenClinicB}`);
+        .set('Authorization', `Bearer ${tokenClinicA}`);
 
       expect(res.status).toBe(400);
       expect(res.body.ok).toBe(false);

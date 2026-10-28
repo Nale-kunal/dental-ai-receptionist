@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import { useClinic } from '../context/ClinicContext';
@@ -24,9 +24,16 @@ export type ReceptionistTab = 'chats' | 'settings' | 'integration';
 interface ReceptionistViewProps {
   onOpenHandoffModal: (handoff: any) => void;
   initialTab?: ReceptionistTab;
+  initialConversationId?: string;
+  onConversationSelect?: (id: string) => void;
 }
 
-export const ReceptionistView: React.FC<ReceptionistViewProps> = ({ onOpenHandoffModal, initialTab }) => {
+export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
+  onOpenHandoffModal,
+  initialTab,
+  initialConversationId,
+  onConversationSelect,
+}) => {
   const toast = useToast();
   const { formatTime } = useClinic();
   const [activeTab, setActiveTab] = useState<ReceptionistTab>(initialTab || 'chats');
@@ -40,28 +47,40 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({ onOpenHandof
   // Chats state
   const [conversations, setConversations] = useState<any[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(initialConversationId || null);
   const [selectedChat, setSelectedChat] = useState<any | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
 
   // Message reply composer state
   const [replyText, setReplyText] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const [resolveHandoffOnSend, setResolveHandoffOnSend] = useState(false);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const lastSyncTimestampRef = React.useRef<string>(new Date().toISOString());
 
   // Settings state
   const [settings, setSettings] = useState<any>(null);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Notify parent of conversation selection for route synchronization
+  useEffect(() => {
+    if (selectedConversationId && onConversationSelect) {
+      onConversationSelect(selectedConversationId);
+    }
+  }, [selectedConversationId, onConversationSelect]);
+
   // Load conversations
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async (preserveId?: string) => {
     try {
       setLoadingConversations(true);
       const res = await api.getConversations({ pageSize: 40 });
       setConversations(res.items || []);
-      if (res.items && res.items.length > 0 && !selectedConversationId) {
+      const targetId = preserveId || selectedConversationId || initialConversationId;
+      if (targetId && res.items?.some((c: any) => c.id === targetId)) {
+        setSelectedConversationId(targetId);
+      } else if (res.items && res.items.length > 0 && !selectedConversationId) {
         setSelectedConversationId(res.items[0].id);
       }
     } catch (err: any) {
@@ -69,25 +88,160 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({ onOpenHandof
     } finally {
       setLoadingConversations(false);
     }
-  };
+  }, [selectedConversationId, initialConversationId, toast]);
 
   // Load selected chat messages
-  const loadChat = async (id: string) => {
+  const loadChat = useCallback(async (id: string) => {
     setLoadingMessages(true);
     try {
       const res = await api.getConversation(id);
       setSelectedChat(res);
+      lastSyncTimestampRef.current = new Date().toISOString();
     } catch (err: any) {
       toast.error('Unable to load messages', err.message);
     } finally {
       setLoadingMessages(false);
     }
-  };
+  }, [toast]);
+
+  // Initial load
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
 
   useEffect(() => {
     if (!selectedConversationId) return;
     loadChat(selectedConversationId);
-  }, [selectedConversationId]);
+  }, [selectedConversationId, loadChat]);
+
+  // Real-time EventSource listener + Delta Sync
+  useEffect(() => {
+    let es: EventSource | null = null;
+    let reconnectTimer: any = null;
+    let isDisposed = false;
+
+    const setupSSE = async () => {
+      if (isDisposed) return;
+      try {
+        const ticket = await api.getStreamTicket();
+        if (isDisposed) return;
+        const streamUrl = api.getConversationStreamUrl(ticket);
+        es = new EventSource(streamUrl);
+
+        es.onopen = () => {
+          if (!isDisposed) {
+            setRealtimeConnected(true);
+          }
+        };
+
+        es.addEventListener('message', (e: MessageEvent) => {
+          if (isDisposed || !e.data) return;
+          try {
+            const data = JSON.parse(e.data);
+            const { conversationId, message, lastMessageAt, lastMessageBody } = data;
+            if (!message) return;
+
+            lastSyncTimestampRef.current = new Date().toISOString();
+
+            // 1. Update conversations list
+            setConversations((prev) => {
+              const idx = prev.findIndex((c) => c.id === conversationId);
+              if (idx === -1) {
+                // New conversation arrived: reload list
+                loadConversations(selectedConversationId || undefined);
+                return prev;
+              }
+              const updated = [...prev];
+              const conv = { ...updated[idx] };
+              conv.lastMessageBody = lastMessageBody || message.body || conv.lastMessageBody;
+              conv.lastMessageAt = lastMessageAt || message.createdAt || conv.lastMessageAt;
+              conv.messageCount = (conv.messageCount || 0) + 1;
+              updated.splice(idx, 1);
+              updated.unshift(conv);
+              return updated;
+            });
+
+            // 2. If it belongs to currently open chat, append without duplicates
+            setSelectedChat((prevChat: any) => {
+              if (!prevChat) return prevChat;
+              const currentChatId = prevChat.id || prevChat.conversation?.id;
+              if (currentChatId !== conversationId) return prevChat;
+
+              const currentMsgs = prevChat.messages || prevChat.conversation?.messages || [];
+              const exists = currentMsgs.some((m: any) =>
+                m.id === message.id ||
+                (message.providerMessageId && m.providerMessageId === message.providerMessageId)
+              );
+              if (exists) return prevChat;
+
+              const updatedMsgs = [...currentMsgs, message];
+              return {
+                ...prevChat,
+                messages: updatedMsgs,
+                conversation: {
+                  ...(prevChat.conversation || prevChat),
+                  messages: updatedMsgs,
+                  lastMessageAt: message.createdAt,
+                  lastMessageBody: message.body,
+                },
+              };
+            });
+          } catch (err) {
+            console.warn('Error processing realtime message event:', err);
+          }
+        });
+
+        es.onerror = () => {
+          if (isDisposed) return;
+          setRealtimeConnected(false);
+          es?.close();
+          reconnectTimer = setTimeout(setupSSE, 4000);
+        };
+      } catch {
+        setRealtimeConnected(false);
+        reconnectTimer = setTimeout(setupSSE, 5000);
+      }
+    };
+
+    setupSSE();
+
+    // Tab visibility recovery handler: catch up on any missed messages
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && !isDisposed) {
+        try {
+          const syncRes = await api.syncConversations(lastSyncTimestampRef.current, selectedConversationId || undefined);
+          if (syncRes.messages && syncRes.messages.length > 0) {
+            lastSyncTimestampRef.current = syncRes.serverTime || new Date().toISOString();
+            syncRes.messages.forEach((msg) => {
+              setSelectedChat((prevChat: any) => {
+                if (!prevChat) return prevChat;
+                const currentChatId = prevChat.id || prevChat.conversation?.id;
+                if (currentChatId !== msg.conversationId) return prevChat;
+                const currentMsgs = prevChat.messages || prevChat.conversation?.messages || [];
+                if (currentMsgs.some((m: any) => m.id === msg.id)) return prevChat;
+                return {
+                  ...prevChat,
+                  messages: [...currentMsgs, msg],
+                };
+              });
+            });
+            loadConversations(selectedConversationId || undefined);
+          }
+        } catch {
+          // ignore transient sync error
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      isDisposed = true;
+      if (es) es.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [selectedConversationId, loadConversations]);
 
   // Scroll messages to bottom when chat loads or message sent
   useEffect(() => {
@@ -296,7 +450,7 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({ onOpenHandof
                 Patient Conversations ({conversations.length})
               </h3>
               <button
-                onClick={loadConversations}
+                onClick={() => loadConversations()}
                 title="Refresh Conversations"
                 aria-label="Refresh Conversations"
                 style={{

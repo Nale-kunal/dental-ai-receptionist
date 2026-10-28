@@ -28,32 +28,71 @@ interface DashboardContentProps {
   onLogout?: () => void;
 }
 
+const VALID_TABS: NavTab[] = ['dashboard', 'appointments', 'patients', 'receptionist', 'schedules', 'services', 'analytics', 'audit', 'settings'];
+
+function getInitialTab(): NavTab {
+  if (typeof window === 'undefined') return 'dashboard';
+  const params = new URLSearchParams(window.location.search);
+  const rawTab = params.get('tab');
+  if (rawTab && VALID_TABS.includes(rawTab as NavTab)) return rawTab as NavTab;
+  const hash = window.location.hash.toLowerCase().replace('#', '');
+  if (hash && VALID_TABS.includes(hash as NavTab)) return hash as NavTab;
+  if (hash.includes('whatsapp') || hash.includes('integration') || rawTab === 'whatsapp') return 'receptionist';
+  const saved = localStorage.getItem('dental_active_tab');
+  if (saved && VALID_TABS.includes(saved as NavTab)) return saved as NavTab;
+  return 'dashboard';
+}
+
+function getInitialSubTab(): 'chats' | 'settings' | 'integration' {
+  if (typeof window === 'undefined') return 'chats';
+  const params = new URLSearchParams(window.location.search);
+  const subtab = params.get('subtab') as 'chats' | 'settings' | 'integration' | null;
+  if (subtab && ['chats', 'settings', 'integration'].includes(subtab)) return subtab;
+  const hash = window.location.hash.toLowerCase();
+  if (hash.includes('whatsapp') || hash.includes('integration') || params.get('tab') === 'whatsapp') {
+    return 'integration';
+  }
+  return 'chats';
+}
+
 const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [receptionistSubTab, setReceptionistSubTab] = useState<'chats' | 'settings' | 'integration'>('chats');
+  const [activeTab, setActiveTabState] = useState<NavTab>(getInitialTab);
+  const [receptionistSubTab, setReceptionistSubTab] = useState<'chats' | 'settings' | 'integration'>(getInitialSubTab);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pendingHandoffsCount, setPendingHandoffsCount] = useState(0);
 
-  // URL hash and query param listener for direct navigation to WhatsApp Integration
-  useEffect(() => {
-    const handleUrlHash = () => {
-      const hash = window.location.hash.toLowerCase();
-      const params = new URLSearchParams(window.location.search);
-      if (hash.includes('whatsapp') || hash.includes('integration') || params.get('tab') === 'whatsapp') {
-        setActiveTab('receptionist');
-        setReceptionistSubTab('integration');
-      } else if (params.get('tab') && ['dashboard', 'appointments', 'patients', 'receptionist', 'schedules', 'services', 'analytics', 'audit', 'settings'].includes(params.get('tab')!)) {
-        setActiveTab(params.get('tab') as NavTab);
-        if (params.get('subtab') === 'integration') {
-          setReceptionistSubTab('integration');
-        }
+  const setActiveTab = useCallback((tab: NavTab) => {
+    setActiveTabState(tab);
+    try {
+      localStorage.setItem('dental_active_tab', tab);
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tab);
+      if (tab !== 'receptionist') {
+        url.searchParams.delete('conversationId');
+        url.searchParams.delete('subtab');
       }
+      window.history.replaceState({}, '', url.toString());
+    } catch {
+      // browser storage guard
+    }
+  }, []);
+
+  // URL hash and query param listener for direct navigation & back/forward buttons
+  useEffect(() => {
+    const handleUrlChange = () => {
+      const tab = getInitialTab();
+      setActiveTabState(tab);
+      const subtab = getInitialSubTab();
+      setReceptionistSubTab(subtab);
     };
-    handleUrlHash();
-    window.addEventListener('hashchange', handleUrlHash);
-    return () => window.removeEventListener('hashchange', handleUrlHash);
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
   }, []);
 
   // Modal states
@@ -207,6 +246,20 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
               <ReceptionistView
                 onOpenHandoffModal={handleOpenHandoff}
                 initialTab={receptionistSubTab}
+                initialConversationId={new URLSearchParams(window.location.search).get('conversationId') || localStorage.getItem('dental_active_conversation_id') || undefined}
+                onConversationSelect={(convId) => {
+                  try {
+                    if (convId) {
+                      localStorage.setItem('dental_active_conversation_id', convId);
+                      const url = new URL(window.location.href);
+                      url.searchParams.set('tab', 'receptionist');
+                      url.searchParams.set('conversationId', convId);
+                      window.history.replaceState({}, '', url.toString());
+                    }
+                  } catch {
+                    // storage guard
+                  }
+                }}
               />
             )}
             {activeTab === 'schedules' && (

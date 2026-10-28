@@ -5,8 +5,9 @@ import { encryptSecret } from '../../utils/encryption';
 
 describe('WhatsApp Multi-Tenant Integration & Security Suite', () => {
   let pool: Pool;
+  const oracleClinicId = '914fb00e-c834-4e44-9646-9d746f536d4e';
+  const canonicalPhoneId = '1330570960147204';
   const demoClinicId = '00000000-0000-0000-0000-000000000001';
-  const demoPhoneId = '1330570960147204';
 
   beforeAll(() => {
     const env = fs.readFileSync('.env', 'utf-8');
@@ -20,25 +21,25 @@ describe('WhatsApp Multi-Tenant Integration & Security Suite', () => {
   });
 
   describe('1. Phone Number ID Mapping & Resolution', () => {
-    it('resolves Demo Clinic from its canonical WhatsApp Phone Number ID when enabled', async () => {
+    it('resolves configured clinic (Oracle Clinic) from its canonical WhatsApp Phone Number ID when enabled', async () => {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         await client.query(
           `UPDATE api.clinic_whatsapp_integrations SET enabled = true WHERE clinic_id = $1`,
-          [demoClinicId]
+          [oracleClinicId]
         );
         const res = await client.query(
           `SELECT api.get_clinic_by_phone_number_id($1) as resolution`,
-          [demoPhoneId]
+          [canonicalPhoneId]
         );
         const data = res.rows[0].resolution;
 
         expect(data.ok).toBe(true);
         expect(data.code).toBe('OK');
-        expect(data.data.clinic_id).toBe(demoClinicId);
-        expect(data.data.name).toBe('Demo Dental Clinic');
-        expect(data.data.phone_number_id).toBe(demoPhoneId);
+        expect(data.data.clinic_id).toBe(oracleClinicId);
+        expect(data.data.name).toBe('Oracle Clinic');
+        expect(data.data.phone_number_id).toBe(canonicalPhoneId);
       } finally {
         await client.query('ROLLBACK');
         client.release();
@@ -126,12 +127,12 @@ describe('WhatsApp Multi-Tenant Integration & Security Suite', () => {
           VALUES ($1, 'Second Clinic', 'second-clinic', 'America/New_York')
         `, [secondClinicId]);
 
-        // Attempt to insert duplicate demoPhoneId for secondClinicId
+        // Attempt to insert duplicate canonicalPhoneId for secondClinicId
         await expect(
           client.query(`
             INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id)
             VALUES ($1, $2)
-          `, [secondClinicId, demoPhoneId])
+          `, [secondClinicId, canonicalPhoneId])
         ).rejects.toThrow(/unique constraint|clinic_whatsapp_integrations_phone_number_id_uidx/i);
       } finally {
         await client.query('ROLLBACK');
@@ -191,11 +192,11 @@ describe('WhatsApp Multi-Tenant Integration & Security Suite', () => {
   describe('4. Outbound WhatsApp Provider Dispatch Service', () => {
     it('returns logged_locally and not_configured when clinic has no WhatsApp integration', async () => {
       const service = new WhatsAppService();
-      // Oracle clinic has no integration configured
-      const oracleClinicId = '914fb00e-c834-4e44-9646-9d746f536d4e';
+      // Demo clinic has no integration configured (phone_number_id is null)
+      const unconfiguredClinicId = demoClinicId;
 
       const result = await service.sendMessage({
-        clinicId: oracleClinicId,
+        clinicId: unconfiguredClinicId,
         toPhone: '+15550001111',
         body: 'Hello from dental clinic',
       });
