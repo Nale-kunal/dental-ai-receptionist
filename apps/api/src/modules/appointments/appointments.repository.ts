@@ -401,8 +401,9 @@ export async function getDashboardMetrics(clinicId: string) {
         clinicId
       ).catch(() => [{ total: '0' }]),
       prisma.$queryRawUnsafe<[{ count: string }]>(
-        `SELECT COUNT(*)::text as count FROM api.handoffs
-         WHERE clinic_id = $1::uuid AND status = 'pending'`,
+        `SELECT COUNT(*)::text as count FROM api.handoffs h
+         JOIN api.conversations c ON c.id = h.conversation_id AND c.clinic_id = h.clinic_id AND c.closed_at IS NULL
+         WHERE h.clinic_id = $1::uuid AND h.status = 'pending'`,
         clinicId
       ).catch(() => [{ count: '0' }]),
       prisma.$queryRawUnsafe<[{ active: string; total: string }]>(

@@ -27,6 +27,24 @@ handoffsRouter.get('/', async (req, res, next) => {
       params.push(status);
     }
 
+    // Pending handoffs require an existing, non-closed conversation to be actionable
+    if (status === 'pending') {
+      conditions.push(`h.conversation_id IS NOT NULL`);
+      conditions.push(`EXISTS (
+        SELECT 1 FROM api.conversations c
+        WHERE c.id = h.conversation_id
+          AND c.clinic_id = h.clinic_id
+          AND c.closed_at IS NULL
+      )`);
+    } else if (!status) {
+      conditions.push(`(h.status != 'pending' OR (h.conversation_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM api.conversations c
+        WHERE c.id = h.conversation_id
+          AND c.clinic_id = h.clinic_id
+          AND c.closed_at IS NULL
+      )))`);
+    }
+
     const where = conditions.join(' AND ');
 
     const countResult = await prisma.$queryRawUnsafe<[{ count: string }]>(

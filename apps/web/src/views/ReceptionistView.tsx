@@ -234,6 +234,10 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
               }
               return remaining;
             });
+
+            // Notify dashboard and badge in real time
+            window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { conversationId } }));
+            window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
           } catch (err) {
             console.warn('Error processing conversation_deleted event:', err);
           }
@@ -401,6 +405,17 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
 
       setDeleteModalOpen(false);
       setConversationToDelete(null);
+
+      // Dispatch local and cross-tab events for dashboard and badge consistency
+      window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { conversationId: targetId } }));
+      window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
+      try {
+        const bc = new BroadcastChannel('dental_clinic_sync');
+        bc.postMessage({ type: 'CONVERSATION_DELETED', conversationId: targetId });
+        bc.close();
+      } catch {
+        // BroadcastChannel unavailable
+      }
     } catch (err: any) {
       toast.error('Deletion Failed', err.message || 'Unable to delete conversation.');
     } finally {

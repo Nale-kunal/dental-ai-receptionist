@@ -124,7 +124,35 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
       updateHandoffBadge();
     });
     const interval = setInterval(updateHandoffBadge, 30000);
-    return () => clearInterval(interval);
+
+    const handleConvDeleted = () => {
+      updateHandoffBadge();
+    };
+    const handleRefreshDash = () => {
+      updateHandoffBadge();
+    };
+    window.addEventListener('clinic:conversation_deleted', handleConvDeleted);
+    window.addEventListener('clinic:refresh_dashboard', handleRefreshDash);
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('dental_clinic_sync');
+      bc.onmessage = (event) => {
+        if (event?.data?.type === 'CONVERSATION_DELETED') {
+          updateHandoffBadge();
+          window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: event.data }));
+        }
+      };
+    } catch {
+      // BroadcastChannel unsupported fallback
+    }
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('clinic:conversation_deleted', handleConvDeleted);
+      window.removeEventListener('clinic:refresh_dashboard', handleRefreshDash);
+      if (bc) bc.close();
+    };
   }, [updateHandoffBadge]);
 
   const handleRefresh = async () => {
@@ -246,6 +274,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
           >
             {activeTab === 'dashboard' && (
               <DashboardView
+                key={refreshKey}
                 onNavigate={setActiveTab}
                 onOpenBookingModal={() => handleOpenBooking()}
                 onOpenHandoffModal={handleOpenHandoff}

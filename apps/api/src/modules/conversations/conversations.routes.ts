@@ -761,8 +761,8 @@ conversationsRouter.post('/:id/messages', async (req, res, next) => {
  * Permanently deletes a conversation and its message transcript from PostgreSQL.
  * Strict clinic/tenant isolation is enforced in the database query itself:
  * WHERE id = $1::uuid AND clinic_id = $2::uuid.
- * Preserves all patient records, booked appointments, and audit history.
- * Detaches handoffs and notifications by setting conversation_id = NULL.
+ * Preserves all patient records, booked appointments, and independent clinic history.
+ * Permanently deletes conversation-owned handoffs, notifications, and message transcripts.
  * Emits real-time SSE event to notify other clients in the same clinic.
  */
 conversationsRouter.delete('/:id', async (req, res, next) => {
@@ -775,24 +775,25 @@ conversationsRouter.delete('/:id', async (req, res, next) => {
     }
 
     const deleted = await prisma.$transaction(async (tx) => {
-      // 1. Detach audit records (handoffs, notifications) so their clinical history is preserved
+      // 1. Delete dependent staff handoff records belonging to this conversation
       await tx.$executeRawUnsafe(
-        `UPDATE api.handoffs SET conversation_id = NULL WHERE conversation_id = $1::uuid AND clinic_id = $2::uuid`,
+        `DELETE FROM api.handoffs WHERE conversation_id = $1::uuid AND clinic_id = $2::uuid`,
         conversationId,
         clinicId
       );
+      // 2. Delete conversation-specific notifications
       await tx.$executeRawUnsafe(
-        `UPDATE api.notifications SET conversation_id = NULL WHERE conversation_id = $1::uuid AND clinic_id = $2::uuid`,
+        `DELETE FROM api.notifications WHERE conversation_id = $1::uuid AND clinic_id = $2::uuid`,
         conversationId,
         clinicId
       );
-      // 2. Delete messages transcript associated with this conversation
+      // 3. Delete messages transcript associated with this conversation
       await tx.$executeRawUnsafe(
         `DELETE FROM api.messages WHERE conversation_id = $1::uuid AND clinic_id = $2::uuid`,
         conversationId,
         clinicId
       );
-      // 3. Delete the conversation permanently with strict clinic/tenant isolation
+      // 4. Delete the conversation permanently with strict clinic/tenant isolation
       const rows = await tx.$queryRawUnsafe<any[]>(
         `DELETE FROM api.conversations WHERE id = $1::uuid AND clinic_id = $2::uuid RETURNING id`,
         conversationId,

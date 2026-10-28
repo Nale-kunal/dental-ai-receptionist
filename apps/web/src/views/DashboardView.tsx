@@ -37,9 +37,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [recentAppointments, setRecentAppointments] = useState<any[]>([]);
   const [pendingHandoffs, setPendingHandoffs] = useState<any[]>([]);
 
-  const loadData = async () => {
+  const loadData = async (silent?: boolean) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [sumRes, apptRes, handRes] = await Promise.all([
         api.getReportsSummary(),
         api.getAppointments({ pageSize: 6 }),
@@ -49,14 +49,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       setRecentAppointments(apptRes.items || []);
       setPendingHandoffs(handRes.items || []);
     } catch (err: any) {
-      toast.error('Unable to load dashboard', err.message);
+      if (!silent) toast.error('Unable to load dashboard', err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     loadData();
+
+    const handleRefresh = () => {
+      loadData(true);
+    };
+
+    const handleConversationDeleted = (e: any) => {
+      const convId = e?.detail?.conversationId;
+      if (convId) {
+        setPendingHandoffs((prev) =>
+          prev.filter((h) => h.conversationId !== convId && h.conversation_id !== convId)
+        );
+      }
+      loadData(true);
+    };
+
+    window.addEventListener('clinic:refresh_dashboard', handleRefresh);
+    window.addEventListener('clinic:conversation_deleted', handleConversationDeleted);
+
+    return () => {
+      window.removeEventListener('clinic:refresh_dashboard', handleRefresh);
+      window.removeEventListener('clinic:conversation_deleted', handleConversationDeleted);
+    };
   }, []);
 
   if (loading) {

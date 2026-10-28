@@ -442,14 +442,12 @@ describe('Dental AI Receptionist — Reliability, Availability & Real-Time Sync 
       );
       expect(checkMsgs.rows[0].count).toBe(0);
 
-      // 8. Verify handoff audit record is PRESERVED with conversation_id set to NULL
+      // 8. Verify conversation-owned handoff is permanently deleted within the transaction
       const checkHandoff = await client.query(
         `SELECT id, conversation_id, status, reason FROM api.handoffs WHERE id = $1::uuid`,
         [handoffId]
       );
-      expect(checkHandoff.rows.length).toBe(1);
-      expect(checkHandoff.rows[0].conversation_id).toBeNull();
-      expect(checkHandoff.rows[0].reason).toBe('Test handoff preservation');
+      expect(checkHandoff.rows.length).toBe(0);
 
       // 9. Verify patient record is completely preserved
       const checkPatient = await client.query(
@@ -465,8 +463,7 @@ describe('Dental AI Receptionist — Reliability, Availability & Real-Time Sync 
       expect(inboxRes.status).toBe(200);
       expect(inboxRes.body.data.items.some((c: any) => c.id === conversationId)).toBe(false);
 
-      // 11. Cleanup test patient & handoff
-      await client.query(`DELETE FROM api.handoffs WHERE id = $1::uuid`, [handoffId]);
+      // 11. Cleanup test patient
       await client.query(`DELETE FROM api.patients WHERE id = $1::uuid`, [patientId]);
     });
 
@@ -505,6 +502,130 @@ describe('Dental AI Receptionist — Reliability, Availability & Real-Time Sync 
         .delete(`/api/v1/conversations/${convAId}`)
         .set('Authorization', `Bearer ${clinicAToken}`);
       expect(cleanupRes.status).toBe(200);
+    });
+
+    it('handles duplicate or repeated deletion requests safely by returning 404', async () => {
+      const token = makeToken(oracleClinicId);
+      const testPhoneDup = '+1555' + Math.floor(1000000 + Math.random() * 9000000);
+
+      const convRes = await client.query(
+        `INSERT INTO api.conversations (clinic_id, channel, channel_conversation_id)
+         VALUES ($1::uuid, 'whatsapp', $2)
+         RETURNING id`,
+        [oracleClinicId, testPhoneDup]
+      );
+      const convId = convRes.rows[0].id;
+
+      // First delete succeeds
+      const firstRes = await request(app)
+        .delete(`/api/v1/conversations/${convId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(firstRes.status).toBe(200);
+      expect(firstRes.body.ok).toBe(true);
+
+      // Second delete returns 404 cleanly
+      const secondRes = await request(app)
+        .delete(`/api/v1/conversations/${convId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(secondRes.status).toBe(404);
+      expect(secondRes.body.ok).toBe(false);
+      expect(secondRes.body.message).toContain('Conversation not found');
+    });
+
+    it('excludes orphaned or detached handoffs from pending list and reports summary, while preserving historical resolved handoffs', async () => {
+      const token = makeToken(oracleClinicId);
+
+      // 1. Insert a detached pending handoff (conversation_id = NULL)
+      const orphanPendingRes = await client.query(
+        `INSERT INTO api.handoffs (clinic_id, conversation_id, channel, status, priority, reason)
+         VALUES ($1::uuid, NULL, 'whatsapp'::api.channel_type, 'pending', 'normal', 'Test orphaned pending handoff')
+         RETURNING id`,
+        [oracleClinicId]
+      );
+      const orphanPendingId = orphanPendingRes.rows[0].id;
+
+      // 2. Insert a resolved historical handoff (conversation_id = NULL)
+      const resolvedHandoffRes = await client.query(
+        `INSERT INTO api.handoffs (clinic_id, conversation_id, channel, status, priority, reason, resolution)
+         VALUES ($1::uuid, NULL, 'whatsapp'::api.channel_type, 'resolved', 'normal', 'Test historical resolved handoff', 'Completed by test')
+         RETURNING id`,
+        [oracleClinicId]
+      );
+      const resolvedHandoffId = resolvedHandoffRes.rows[0].id;
+
+      try {
+        // Query GET /api/v1/handoffs?status=pending
+        const pendingRes = await request(app)
+          .get('/api/v1/handoffs?status=pending')
+          .set('Authorization', `Bearer ${token}`);
+        expect(pendingRes.status).toBe(200);
+        // Orphaned pending handoff must NOT appear in actionable pending list
+        expect(pendingRes.body.data.items.some((h: any) => h.id === orphanPendingId)).toBe(false);
+
+        // Query GET /api/v1/handoffs?status=resolved
+        const resolvedRes = await request(app)
+          .get('/api/v1/handoffs?status=resolved')
+          .set('Authorization', `Bearer ${token}`);
+        expect(resolvedRes.status).toBe(200);
+        // Historical resolved handoff MUST remain accessible
+        expect(resolvedRes.body.data.items.some((h: any) => h.id === resolvedHandoffId)).toBe(true);
+
+        // Query GET /api/v1/reports/summary
+        const summaryRes = await request(app)
+          .get('/api/v1/reports/summary')
+          .set('Authorization', `Bearer ${token}`);
+        expect(summaryRes.status).toBe(200);
+        // Pending staff attention must NOT count the orphaned pending handoff
+        // If there are no other active conversations with pending handoffs in Oracle clinic, count is 0
+        const pendingCount = summaryRes.body.data.pendingStaffAttention;
+        expect(typeof pendingCount).toBe('number');
+      } finally {
+        await client.query(`DELETE FROM api.handoffs WHERE id IN ($1::uuid, $2::uuid)`, [orphanPendingId, resolvedHandoffId]);
+      }
+    });
+
+    it('preserves and returns valid pending handoffs that belong to active existing conversations', async () => {
+      const token = makeToken(oracleClinicId);
+      const testPhoneActive = '+1555' + Math.floor(1000000 + Math.random() * 9000000);
+
+      // 1. Create active conversation
+      const convRes = await client.query(
+        `INSERT INTO api.conversations (clinic_id, channel, channel_conversation_id)
+         VALUES ($1::uuid, 'whatsapp', $2)
+         RETURNING id`,
+        [oracleClinicId, testPhoneActive]
+      );
+      const convId = convRes.rows[0].id;
+
+      // 2. Insert valid pending handoff referencing active conversation
+      const handoffRes = await client.query(
+        `INSERT INTO api.handoffs (clinic_id, conversation_id, channel, status, priority, reason)
+         VALUES ($1::uuid, $2::uuid, 'whatsapp'::api.channel_type, 'pending', 'high', 'Valid active conversation handoff')
+         RETURNING id`,
+        [oracleClinicId, convId]
+      );
+      const handoffId = handoffRes.rows[0].id;
+
+      try {
+        // Query pending handoffs
+        const pendingRes = await request(app)
+          .get('/api/v1/handoffs?status=pending')
+          .set('Authorization', `Bearer ${token}`);
+        expect(pendingRes.status).toBe(200);
+        // The active pending handoff MUST be returned
+        expect(pendingRes.body.data.items.some((h: any) => h.id === handoffId)).toBe(true);
+
+        // Query reports summary
+        const summaryRes = await request(app)
+          .get('/api/v1/reports/summary')
+          .set('Authorization', `Bearer ${token}`);
+        expect(summaryRes.status).toBe(200);
+        expect(summaryRes.body.data.pendingStaffAttention).toBeGreaterThanOrEqual(1);
+      } finally {
+        await request(app)
+          .delete(`/api/v1/conversations/${convId}`)
+          .set('Authorization', `Bearer ${token}`);
+      }
     });
 
     it('returns 404 for nonexistent conversation UUID and 400 for invalid UUID format', async () => {
@@ -547,43 +668,45 @@ describe('Dental AI Receptionist — Reliability, Availability & Real-Time Sync 
       );
       const conversationId = convRes.rows[0].id;
 
-      // Send staff reply
-      const replyRes = await request(app)
-        .post(`/api/v1/conversations/${conversationId}/messages`)
-        .set('Authorization', `Bearer ${token}`)
-        .send({ body: 'Hello, our clinic is open Monday at 10 AM.', resolveHandoff: false });
+      try {
+        // Send staff reply
+        const replyRes = await request(app)
+          .post(`/api/v1/conversations/${conversationId}/messages`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ body: 'Hello, our clinic is open Monday at 10 AM.', resolveHandoff: false });
 
-      expect(replyRes.status).toBe(200);
-      expect(replyRes.body.ok).toBe(true);
-      const sentMsg = replyRes.body.data;
-      expect(sentMsg.id).toBeDefined();
-      expect(sentMsg.conversationId).toBe(conversationId);
-      expect(sentMsg.isStaff).toBe(true);
-      expect(sentMsg.content).toBe('Hello, our clinic is open Monday at 10 AM.');
+        expect(replyRes.status).toBe(200);
+        expect(replyRes.body.ok).toBe(true);
+        const sentMsg = replyRes.body.data;
+        expect(sentMsg.id).toBeDefined();
+        expect(sentMsg.conversationId).toBe(conversationId);
+        expect(sentMsg.isStaff).toBe(true);
+        expect(sentMsg.content).toBe('Hello, our clinic is open Monday at 10 AM.');
 
-      // Verify delta sync returns this message with the exact same ID
-      const syncRes = await request(app)
-        .get(`/api/v1/conversations/sync?conversationId=${conversationId}`)
-        .set('Authorization', `Bearer ${token}`);
+        // Verify delta sync returns this message with the exact same ID
+        const syncRes = await request(app)
+          .get(`/api/v1/conversations/sync?conversationId=${conversationId}`)
+          .set('Authorization', `Bearer ${token}`);
 
-      expect(syncRes.status).toBe(200);
-      expect(syncRes.body.ok).toBe(true);
-      const syncMsgs = syncRes.body.data.messages;
-      expect(syncMsgs.length).toBe(1);
-      expect(syncMsgs[0].id).toBe(sentMsg.id);
-      expect(syncMsgs[0].isStaff).toBe(true);
+        expect(syncRes.status).toBe(200);
+        expect(syncRes.body.ok).toBe(true);
+        const syncMsgs = syncRes.body.data.messages;
+        expect(syncMsgs.length).toBe(1);
+        expect(syncMsgs[0].id).toBe(sentMsg.id);
+        expect(syncMsgs[0].isStaff).toBe(true);
 
-      // Verify conversation last_message_at was updated
-      const convCheck = await client.query(
-        `SELECT last_message_at FROM api.conversations WHERE id = $1::uuid`,
-        [conversationId]
-      );
-      expect(convCheck.rows[0].last_message_at).not.toBeNull();
-
-      // Clean up conversation
-      await request(app)
-        .delete(`/api/v1/conversations/${conversationId}`)
-        .set('Authorization', `Bearer ${token}`);
+        // Verify conversation last_message_at was updated
+        const convCheck = await client.query(
+          `SELECT last_message_at FROM api.conversations WHERE id = $1::uuid`,
+          [conversationId]
+        );
+        expect(convCheck.rows[0].last_message_at).not.toBeNull();
+      } finally {
+        // Clean up conversation
+        await request(app)
+          .delete(`/api/v1/conversations/${conversationId}`)
+          .set('Authorization', `Bearer ${token}`);
+      }
     });
   });
 

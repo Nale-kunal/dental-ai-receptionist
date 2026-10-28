@@ -61,8 +61,9 @@ reportsRouter.get('/summary', async (req, res, next) => {
       // 5. Active conversations currently requiring staff attention (pending handoff)
       prisma.$queryRawUnsafe<Array<{ count: number }>>(
         `SELECT COUNT(*)::int as count
-         FROM api.handoffs
-         WHERE clinic_id = $1::uuid AND status = 'pending'`,
+         FROM api.handoffs h
+         JOIN api.conversations c ON c.id = h.conversation_id AND c.clinic_id = h.clinic_id AND c.closed_at IS NULL
+         WHERE h.clinic_id = $1::uuid AND h.status = 'pending'`,
         clinicId
       ).catch(() => [{ count: 0 }]),
 
