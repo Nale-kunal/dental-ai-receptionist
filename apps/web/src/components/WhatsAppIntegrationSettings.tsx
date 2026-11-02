@@ -369,7 +369,7 @@ export const WhatsAppIntegrationSettings: React.FC = () => {
             }}
           >
             <Building size={12} color="var(--accent-primary)" />
-            <span>Clinic Scope: <strong>{clinic?.name || 'Demo Dental Clinic'}</strong></span>
+            <span>Clinic Scope: <strong>{clinic?.name || 'Clinic'}</strong></span>
           </div>
         </div>
 

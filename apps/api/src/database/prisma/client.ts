@@ -12,12 +12,63 @@ import { PrismaClient } from '@prisma/client';
 import { logger } from '../../config/logger';
 
 let _prisma: PrismaClient | undefined;
+let _overrideDatabaseUrl: string | undefined;
+
+/**
+ * Explicitly sets the database connection URL for PrismaClient.
+ * Disconnects any existing client instance to ensure complete connection isolation.
+ * Used by the test database guard to ensure Prisma and raw PostgreSQL clients
+ * target the exact same validated isolated test database.
+ */
+export function setPrismaDatabaseUrl(url: string | undefined): void {
+  if (_prisma) {
+    _prisma.$disconnect().catch(() => {});
+    _prisma = undefined;
+  }
+  _overrideDatabaseUrl = url;
+}
 
 export function getPrisma(): PrismaClient {
   if (!_prisma) {
-    _prisma = new PrismaClient({
-      log: ['error', 'warn'],
-    });
+    const isTestEnv = process.env.NODE_ENV === 'test';
+
+    if (isTestEnv) {
+      const activeTestUrl = _overrideDatabaseUrl || process.env.TEST_DATABASE_URL;
+
+      if (activeTestUrl) {
+        const lower = activeTestUrl.toLowerCase();
+        if (lower.includes('neon.tech') || lower.includes('ep-empty-salad-b3cw8xsj')) {
+          throw new Error(
+            'CRITICAL SECURITY ERROR: Refusing to initialize PrismaClient in test environment with a production Neon database URL.'
+          );
+        }
+
+        _prisma = new PrismaClient({
+          datasources: {
+            db: {
+              url: activeTestUrl,
+            },
+          },
+          log: ['error', 'warn'],
+        });
+      } else {
+        // In test mode without an active isolated test database,
+        // instantiate PrismaClient strictly bound to an unreachable local mock address.
+        // This ensures unit tests can spy on/mock Prisma methods without ever connecting to Neon.
+        _prisma = new PrismaClient({
+          datasources: {
+            db: {
+              url: 'postgresql://guard-disabled:safe@127.0.0.1:5432/unit_test_mock_db',
+            },
+          },
+          log: ['error', 'warn'],
+        });
+      }
+    } else {
+      _prisma = new PrismaClient({
+        log: ['error', 'warn'],
+      });
+    }
   }
 
   return _prisma;

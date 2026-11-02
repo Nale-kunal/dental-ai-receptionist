@@ -224,23 +224,15 @@ export async function loginUser(data: LoginRequest): Promise<LoginResponse> {
     throw new ForbiddenError('Clinic account is suspended. Please contact clinic administration.');
   }
 
-  // Verify password with bcrypt or demo subject
+  // Verify password with bcrypt
   let isPasswordValid = false;
-  if (user.auth_subject === 'demo-admin') {
-    // In production, demo shortcut passwords are strictly disabled
-    if (env.NODE_ENV === 'production') {
-      throw new UnauthorizedError('Invalid email or password.');
-    }
-    isPasswordValid = data.password === 'password123' || data.password === 'demo';
-  } else if (
+  if (
     user.auth_subject &&
     (user.auth_subject.startsWith('$2a$') ||
       user.auth_subject.startsWith('$2b$') ||
       user.auth_subject.startsWith('$2y$'))
   ) {
     isPasswordValid = await bcrypt.compare(data.password, user.auth_subject);
-  } else if (user.auth_subject) {
-    isPasswordValid = data.password === user.auth_subject;
   }
 
   if (!isPasswordValid) {
@@ -363,17 +355,13 @@ export async function changePassword(userId: string, oldPassword: string, newPas
   if (!user) throw new NotFoundError('User');
 
   let isOldValid = false;
-  if (user.auth_subject === 'demo-admin') {
-    isOldValid = oldPassword === 'password123' || oldPassword === 'demo';
-  } else if (
+  if (
     user.auth_subject &&
     (user.auth_subject.startsWith('$2a$') ||
       user.auth_subject.startsWith('$2b$') ||
       user.auth_subject.startsWith('$2y$'))
   ) {
     isOldValid = await bcrypt.compare(oldPassword, user.auth_subject);
-  } else {
-    isOldValid = oldPassword === user.auth_subject;
   }
 
   if (!isOldValid) {

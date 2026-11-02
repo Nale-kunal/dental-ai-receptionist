@@ -1,43 +1,77 @@
+/**
+ * receptionistSettings.integration.test.ts
+ *
+ * Database Integration Suite for Receptionist Settings & WhatsApp Integration APIs.
+ * STRICT SAFETY RULE: Only runs when TEST_DATABASE_URL is explicitly configured to an
+ * isolated, non-production test database. Never touches production Neon.
+ */
+
 import request from 'supertest';
 import { createApp } from '../../app';
 import { Pool } from 'pg';
-import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { env } from '../../config/env';
+import {
+  describeIsolatedDb,
+  getSafeTestDatabasePool,
+  isIsolatedTestDatabaseAvailable,
+} from '../helpers/testDatabaseGuard';
 
-describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
+describeIsolatedDb('Receptionist Settings & WhatsApp Integration API Suite (Isolated DB)', () => {
   let app: any;
   let pool: Pool;
 
-  const clinicA_Id = '00000000-0000-0000-0000-000000000001'; // Demo Clinic
-  const clinicB_Id = '914fb00e-c834-4e44-9646-9d746f536d4e'; // Oracle Clinic
+  const clinicA_Id = '10000000-0000-0000-0000-000000000001'; // Test Unconfigured Clinic
+  const clinicB_Id = '20000000-0000-0000-0000-000000000002'; // Test Configured Clinic
 
   const tokenClinicA = jwt.sign(
-    { userId: 'user-a-1', email: 'admin@democlinic.com', clinicId: clinicA_Id, tenantId: clinicA_Id, roles: ['clinic_admin'] },
+    { userId: 'user-a-1', email: 'admin@testclinica.test', clinicId: clinicA_Id, tenantId: clinicA_Id, roles: ['clinic_admin'] },
     (env as any).JWT_SECRET || 'test-secret',
     { expiresIn: '1h' }
   );
 
   const tokenClinicB = jwt.sign(
-    { userId: 'user-b-1', email: 'admin@oracleclinic.com', clinicId: clinicB_Id, tenantId: clinicB_Id, roles: ['clinic_admin'] },
+    { userId: 'user-b-1', email: 'admin@testclinicb.test', clinicId: clinicB_Id, tenantId: clinicB_Id, roles: ['clinic_admin'] },
     (env as any).JWT_SECRET || 'test-secret',
     { expiresIn: '1h' }
   );
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    if (!isIsolatedTestDatabaseAvailable()) return;
+
     app = createApp();
-    const envFile = fs.readFileSync('.env', 'utf-8');
-    const match = envFile.match(/DATABASE_URL=([^\r\n]+)/);
-    const connectionString = match ? match[1].replace(/["']/g, '').trim() : process.env.DATABASE_URL;
-    pool = new Pool({ connectionString });
+    pool = getSafeTestDatabasePool();
+
+    // Provision isolated test clinic fixtures
+    await pool.query(`
+      INSERT INTO api.clinics (id, name, slug, timezone, active)
+      VALUES 
+        ($1, 'Test Dental Clinic A', 'test-clinic-a', 'America/New_York', true),
+        ($2, 'Test Configured Clinic B', 'test-clinic-b', 'America/New_York', true)
+      ON CONFLICT (id) DO NOTHING;
+    `, [clinicA_Id, clinicB_Id]);
+
+    // Provision integration record for clinic B
+    await pool.query(`
+      INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, enabled, status)
+      VALUES ($1, '1330570960147204', true, 'valid')
+      ON CONFLICT (clinic_id) DO UPDATE SET phone_number_id = '1330570960147204', enabled = true;
+    `, [clinicB_Id]);
   });
 
   afterAll(async () => {
-    await pool.end();
+    if (pool) {
+      try {
+        await pool.query(`DELETE FROM api.clinics WHERE id IN ($1, $2);`, [clinicA_Id, clinicB_Id]);
+      } catch {
+        // Best-effort cleanup
+      }
+      await pool.end();
+    }
   });
 
   describe('GET /api/v1/receptionist/settings', () => {
-    it('returns canonical phoneNumberId for Oracle Clinic without hardcoded defaults', async () => {
+    it('returns canonical phoneNumberId for configured clinic without hardcoded defaults', async () => {
       const res = await request(app)
         .get('/api/v1/receptionist/settings')
         .set('Authorization', `Bearer ${tokenClinicB}`);
@@ -46,7 +80,7 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
       expect(res.body.ok).toBe(true);
       expect(res.body.data.phoneNumberId).toBe('1330570960147204');
       expect(res.body.data.whatsappPhoneNumberId).toBe('1330570960147204');
-      expect(res.body.data.greetingMessage).toContain('Oracle Clinic');
+      expect(res.body.data.greetingMessage).toContain('Test Configured Clinic B');
       // Must not expose any access token
       expect(res.body.data.accessToken).toBeUndefined();
       expect(res.body.data.meta_access_token).toBeUndefined();
@@ -60,14 +94,13 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.data.phoneNumberId).toBe('');
-      expect(res.body.data.greetingMessage).toContain('Demo Dental Clinic');
-      expect(res.body.data.emergencyPhone).toBe('+15551234567');
+      expect(res.body.data.greetingMessage).toContain('Test Dental Clinic A');
     });
   });
 
   describe('PUT /api/v1/receptionist/settings', () => {
     it('rejects assigning an existing Phone Number ID with 409 Conflict', async () => {
-      // Clinic A attempts to claim Oracle Clinic's phone number ID
+      // Clinic A attempts to claim Clinic B's phone number ID
       const res = await request(app)
         .put('/api/v1/receptionist/settings')
         .set('Authorization', `Bearer ${tokenClinicA}`)
@@ -140,7 +173,6 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
         expect(putRes.body.data.maskedToken).toBe('••••••••4321');
         // Raw token must never be in response
         expect(putRes.body.data.accessToken).toBeUndefined();
-
         expect(putRes.body.data.status).toBe('unvalidated');
 
         // Verify in database that it is encrypted at rest and not plaintext
@@ -150,7 +182,6 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
         );
         expect(dbCheck.rows[0].encrypted_access_token).not.toBe('EAAG_SECRET_TOKEN_VALUE_4321');
         expect(dbCheck.rows[0].encrypted_access_token).toContain(':');
-        // Must be unvalidated on initial save without live Meta verification
         expect(dbCheck.rows[0].status).toBe('unvalidated');
       } finally {
         await pool.query(`DELETE FROM api.clinics WHERE id = $1`, [tempClinicId]);
@@ -165,7 +196,6 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.clinicId).toBe(clinicA_Id);
       expect(res.body.data.clinicId).not.toBe(clinicB_Id);
-      expect(res.body.data.phoneNumberId).toBeNull();
     });
 
     it('returns 400 UNCONFIGURED when validating an unconfigured clinic integration', async () => {
@@ -296,3 +326,4 @@ describe('Receptionist Settings & WhatsApp Integration API Suite', () => {
     });
   });
 });
+

@@ -2,9 +2,14 @@ import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Trash2, AlertTriangle } from 'lucide-react';
 
+export type DeleteConversationMode = 'single' | 'selected' | 'all';
+
 interface DeleteConversationModalProps {
   isOpen: boolean;
-  conversation: any | null;
+  mode?: DeleteConversationMode;
+  conversation?: any | null;
+  selectedCount?: number;
+  totalCount?: number;
   onClose: () => void;
   onConfirm: () => Promise<void>;
   isDeleting: boolean;
@@ -12,7 +17,10 @@ interface DeleteConversationModalProps {
 
 export const DeleteConversationModal: React.FC<DeleteConversationModalProps> = ({
   isOpen,
+  mode = 'single',
   conversation,
+  selectedCount = 0,
+  totalCount = 0,
   onClose,
   onConfirm,
   isDeleting,
@@ -38,22 +46,106 @@ export const DeleteConversationModal: React.FC<DeleteConversationModalProps> = (
     };
   }, [isOpen, onClose, isDeleting]);
 
-  if (!isOpen || !conversation) return null;
+  if (!isOpen) return null;
+  if (mode === 'single' && !conversation) return null;
 
-  const patientDisplay =
-    conversation.patientName ||
-    conversation.contactName ||
-    conversation.patient?.name ||
-    conversation.patientPhone ||
-    conversation.contactPhone ||
-    conversation.phone ||
-    conversation.channel_conversation_id ||
-    'this contact';
+  const patientDisplay = conversation
+    ? conversation.patientName ||
+      conversation.contactName ||
+      conversation.patient?.name ||
+      conversation.patientPhone ||
+      conversation.contactPhone ||
+      conversation.phone ||
+      conversation.channel_conversation_id ||
+      'this contact'
+    : '';
 
   const handleConfirmClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (isDeleting) return;
     await onConfirm();
+  };
+
+  const getTitle = () => {
+    if (mode === 'all') return 'Delete All Clinic Conversations';
+    if (mode === 'selected') return 'Delete Selected Conversations';
+    return 'Delete Conversation';
+  };
+
+  const getSubtitle = () => {
+    if (mode === 'all') return `Scope: Entire clinic inbox (${totalCount} conversation${totalCount === 1 ? '' : 's'})`;
+    if (mode === 'selected') return `${selectedCount} conversation${selectedCount === 1 ? '' : 's'} selected`;
+    return `Thread ID: ${conversation?.id ? String(conversation.id).slice(0, 8) : ''}`;
+  };
+
+  const getPrompt = () => {
+    if (mode === 'all') {
+      return (
+        <>
+          Are you sure you want to permanently delete{' '}
+          <strong style={{ color: 'var(--danger)' }}>
+            ALL {totalCount} conversation{totalCount === 1 ? '' : 's'}
+          </strong>{' '}
+          belonging to this clinic? This action will completely clear your patient conversations inbox.
+        </>
+      );
+    }
+    if (mode === 'selected') {
+      return (
+        <>
+          Are you sure you want to permanently delete the{' '}
+          <strong style={{ color: 'var(--text-primary)' }}>
+            {selectedCount} selected conversation{selectedCount === 1 ? '' : 's'}
+          </strong>
+          ?
+        </>
+      );
+    }
+    return (
+      <>
+        Are you sure you want to permanently delete the conversation with{' '}
+        <strong style={{ color: 'var(--text-primary)' }}>{patientDisplay}</strong>?
+      </>
+    );
+  };
+
+  const getWarning = () => {
+    if (mode === 'all') {
+      return (
+        <>
+          This action <strong style={{ color: 'var(--danger)' }}>cannot be undone</strong>. All conversation threads
+          and message transcripts for this clinic will be permanently deleted from the database. Patient demographic
+          records, contact details, and booked appointments will remain completely intact.
+        </>
+      );
+    }
+    if (mode === 'selected') {
+      return (
+        <>
+          This action <strong style={{ color: 'var(--danger)' }}>cannot be undone</strong>. The message transcripts for
+          the selected conversations will be permanently deleted from the database. Patient demographic records and
+          booked appointments will be preserved.
+        </>
+      );
+    }
+    return (
+      <>
+        This action <strong style={{ color: 'var(--danger)' }}>cannot be undone</strong>. The entire message
+        transcript will be permanently deleted from the database. Patient demographic records and booked
+        appointments will be preserved.
+      </>
+    );
+  };
+
+  const getConfirmButtonText = () => {
+    if (isDeleting) {
+      if (mode === 'all') return 'Deleting All...';
+      if (mode === 'selected') return 'Deleting Selected...';
+      return 'Deleting...';
+    }
+    if (mode === 'all') return 'Delete All Conversations';
+    if (mode === 'selected') return `Delete ${selectedCount} Selected`;
+    return 'Delete Permanently';
   };
 
   return createPortal(
@@ -83,7 +175,7 @@ export const DeleteConversationModal: React.FC<DeleteConversationModalProps> = (
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
-          maxWidth: '460px',
+          maxWidth: '480px',
           overflow: 'hidden',
           padding: 0,
           backgroundColor: 'var(--bg-surface)',
@@ -126,10 +218,10 @@ export const DeleteConversationModal: React.FC<DeleteConversationModalProps> = (
                 id="delete-conversation-modal-title"
                 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}
               >
-                Delete Conversation
+                {getTitle()}
               </h2>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
-                Thread ID: {conversation.id ? String(conversation.id).slice(0, 8) : ''}
+                {getSubtitle()}
               </p>
             </div>
           </div>
@@ -155,8 +247,7 @@ export const DeleteConversationModal: React.FC<DeleteConversationModalProps> = (
         {/* Body */}
         <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: 0 }}>
-            Are you sure you want to permanently delete the conversation with{' '}
-            <strong style={{ color: 'var(--text-primary)' }}>{patientDisplay}</strong>?
+            {getPrompt()}
           </p>
 
           <div
@@ -174,11 +265,7 @@ export const DeleteConversationModal: React.FC<DeleteConversationModalProps> = (
             }}
           >
             <AlertTriangle size={15} color="var(--danger)" style={{ flexShrink: 0, marginTop: '2px' }} />
-            <div>
-              This action <strong style={{ color: 'var(--danger)' }}>cannot be undone</strong>. The entire message
-              transcript will be permanently deleted from the database. Patient demographic records and booked
-              appointments will be preserved.
-            </div>
+            <div>{getWarning()}</div>
           </div>
 
           {/* Actions */}
@@ -207,7 +294,7 @@ export const DeleteConversationModal: React.FC<DeleteConversationModalProps> = (
               }}
             >
               <Trash2 size={13} />
-              {isDeleting ? 'Deleting...' : 'Delete Permanently'}
+              {getConfirmButtonText()}
             </button>
           </div>
         </div>

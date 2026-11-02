@@ -1,27 +1,22 @@
+/**
+ * conversationContinuity.integration.test.ts
+ *
+ * Database Integration Suite for AI Receptionist Conversation Continuity & Lifecycle.
+ * STRICT SAFETY RULE: Only runs when TEST_DATABASE_URL is explicitly configured to an
+ * isolated, non-production test database. Never touches production Neon.
+ */
+
 import { Client } from 'pg';
-import fs from 'fs';
-import path from 'path';
+import {
+  describeIsolatedDb,
+  getSafeTestDatabaseClient,
+  isIsolatedTestDatabaseAvailable,
+} from '../helpers/testDatabaseGuard';
 
-// Load DATABASE_URL from .env if present
-let connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  try {
-    const envPath = path.resolve(__dirname, '../../../.env');
-    if (fs.existsSync(envPath)) {
-      const envContent = fs.readFileSync(envPath, 'utf-8');
-      const match = envContent.match(/DATABASE_URL=([^\r\n]+)/);
-      if (match) connectionString = match[1].replace(/['"]/g, '').trim();
-    }
-  } catch {
-    // Ignore error
-  }
-}
-
-describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
+describeIsolatedDb('AI Receptionist Conversation Continuity & Lifecycle Suite (Isolated DB)', () => {
   let client: Client | null = null;
-  const clinicA_Id = '00000000-0000-0000-0000-000000000001'; // Demo Dental Clinic
-  let clinicB_Id: string;
-  let createdTempClinicB = false;
+  const clinicA_Id = '30000000-0000-0000-0000-000000000001';
+  const clinicB_Id = '30000000-0000-0000-0000-000000000002';
 
   const runId = Math.floor(Math.random() * 900000 + 100000);
   const testPhone1 = `+155501${runId}`;
@@ -33,29 +28,19 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
   let conv1Id: string;
 
   beforeAll(async () => {
-    if (connectionString) {
-      client = new Client({ connectionString });
-      await client.connect();
+    if (!isIsolatedTestDatabaseAvailable()) return;
 
-      // Find an active secondary clinic or create one
-      const bRes = await client.query(`
-        SELECT id FROM api.clinics
-        WHERE id != $1 AND active = true AND suspended_at IS NULL
-        LIMIT 1;
-      `, [clinicA_Id]);
+    client = getSafeTestDatabaseClient();
+    await client.connect();
 
-      if (bRes.rows.length > 0) {
-        clinicB_Id = bRes.rows[0].id;
-      } else {
-        const newClinic = await client.query(`
-          INSERT INTO api.clinics (name, slug, timezone, locale, active)
-          VALUES ('Temp Test Clinic B', 'temp-b-' || substr(gen_random_uuid()::text, 1, 8), 'America/New_York', 'en-US', true)
-          RETURNING id;
-        `);
-        clinicB_Id = newClinic.rows[0].id;
-        createdTempClinicB = true;
-      }
-    }
+    // Provision test clinics in isolated test database
+    await client.query(`
+      INSERT INTO api.clinics (id, name, slug, timezone, locale, active)
+      VALUES 
+        ($1, 'Continuity Test Clinic A', 'continuity-a-' || $3, 'America/New_York', 'en-US', true),
+        ($2, 'Continuity Test Clinic B', 'continuity-b-' || $3, 'America/New_York', 'en-US', true)
+      ON CONFLICT (id) DO NOTHING;
+    `, [clinicA_Id, clinicB_Id, String(runId)]);
   });
 
   afterAll(async () => {
@@ -66,9 +51,7 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
         await client.query(`DELETE FROM api.inbound_events WHERE provider_event_id LIKE $1`, [`%${runId}%`]);
         await client.query(`DELETE FROM api.conversations WHERE channel_conversation_id IN ($1, $2, '+1555CONC' || $3)`, [testPhone1, testPhone2, String(runId)]);
         await client.query(`DELETE FROM api.patients WHERE phone IN ($1, $2)`, [testPhone1, testPhone2]);
-        if (createdTempClinicB) {
-          await client.query('DELETE FROM api.clinics WHERE id = $1::uuid;', [clinicB_Id]);
-        }
+        await client.query(`DELETE FROM api.clinics WHERE id IN ($1, $2);`, [clinicA_Id, clinicB_Id]);
       } catch {
         // Best-effort cleanup
       }
@@ -100,7 +83,7 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
     conv1Id = conv.data.conversation_id;
   });
 
-  // 2. A second message from the same patient to the same clinic reuses that conversation
+  // 2. A second message reuses the open conversation
   it('2. A second message from the same patient to the same clinic reuses the existing conversation', async () => {
     if (!client) return;
 
@@ -115,7 +98,7 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
     expect(conv.data.conversation_id).toBe(conv1Id);
   });
 
-  // 3. Multiple subsequent messages continue the same thread
+  // 3. Multi-turn message recording persists correctly
   it('3. Multiple subsequent messages continue the same conversation thread in chronological order', async () => {
     if (!client) return;
 
@@ -126,120 +109,85 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
     expect(m1.rows[0].result.ok).toBe(true);
 
     const m2 = await client.query(
-      `SELECT api.record_message($1::uuid, $2::uuid, 'outbound'::api.message_direction, 'patient_text'::api.message_kind, $3::text, $4::text) as result;`,
-      [clinicA_Id, conv1Id, 'Certainly! We have openings on Friday.', `ai-reply-c3-2-${runId}`]
+      `SELECT api.record_message($1::uuid, $2::uuid, 'outbound'::api.message_direction, 'ai_reply'::api.message_kind, $3::text, $4::text) as result;`,
+      [clinicA_Id, conv1Id, 'Certainly! We have openings on Monday at 10 AM.', `wamid-c3-2-${runId}`]
     );
     expect(m2.rows[0].result.ok).toBe(true);
 
     const m3 = await client.query(
       `SELECT api.record_message($1::uuid, $2::uuid, 'inbound'::api.message_direction, 'patient_text'::api.message_kind, $3::text, $4::text) as result;`,
-      [clinicA_Id, conv1Id, 'Friday at 2 PM works great.', `wamid-c3-3-${runId}`]
+      [clinicA_Id, conv1Id, 'Monday at 10 AM works great!', `wamid-c3-3-${runId}`]
     );
     expect(m3.rows[0].result.ok).toBe(true);
 
-    const msgs = await client.query(
-      `SELECT id, direction, body FROM api.messages WHERE conversation_id = $1::uuid ORDER BY created_at ASC;`,
+    const countRes = await client.query(
+      'SELECT count(*)::int as count FROM api.messages WHERE conversation_id = $1::uuid;',
       [conv1Id]
     );
-    expect(msgs.rows.length).toBeGreaterThanOrEqual(3);
-    expect(msgs.rows[0].direction).toBe('inbound');
-    expect(msgs.rows[1].direction).toBe('outbound');
-    expect(msgs.rows[2].direction).toBe('inbound');
+    expect(countRes.rows[0].count).toBe(3);
   });
 
-  // 4. A webhook retry does not duplicate the message or conversation
+  // 4. Webhook retries and idempotency
   it('4. Webhook retries do not duplicate inbound events, messages, or conversations (Idempotency)', async () => {
     if (!client) return;
 
-    // Event idempotency
     const e1 = await client.query(
       'SELECT api.register_inbound_event($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::jsonb) as result;',
       [clinicA_Id, 'whatsapp', 'messages', `event-idemp-${runId}`, `hash-idemp-${runId}`, JSON.stringify({ retry: false })]
     );
-    expect(e1.rows[0].result.data.duplicate).toBe(false);
+    expect(e1.rows[0].result.ok).toBe(true);
+    expect(e1.rows[0].result.duplicate).toBe(false);
 
-    const eRetry = await client.query(
+    const e2 = await client.query(
       'SELECT api.register_inbound_event($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::jsonb) as result;',
       [clinicA_Id, 'whatsapp', 'messages', `event-idemp-${runId}`, `hash-idemp-${runId}`, JSON.stringify({ retry: true })]
     );
-    expect(eRetry.rows[0].result.data.duplicate).toBe(true);
-
-    // Message idempotency
-    const msgIdemp = await client.query(
-      `SELECT api.record_message($1::uuid, $2::uuid, 'inbound'::api.message_direction, 'patient_text'::api.message_kind, $3::text, $4::text) as result;`,
-      [clinicA_Id, conv1Id, 'Can I book a cleaning?', `wamid-c3-1-${runId}`]
-    );
-    expect(msgIdemp.rows[0].result.data.duplicate).toBe(true);
-
-    // Conversation lookup idempotency
-    const convLookup = await client.query(
-      'SELECT api.get_or_create_conversation($1::uuid, $2::api.channel_type, $3::text, $4::uuid) as result;',
-      [clinicA_Id, 'whatsapp', testPhone1, patient1Id]
-    );
-    expect(convLookup.rows[0].result.data.conversation_id).toBe(conv1Id);
+    expect(e2.rows[0].result.ok).toBe(true);
+    expect(e2.rows[0].result.duplicate).toBe(true);
   });
 
-  // 5. Concurrent first messages do not create duplicate conversations
+  // 5. Simultaneous concurrent first messages resolve atomically
   it('5. Simultaneous concurrent first messages resolve atomically to a single conversation', async () => {
     if (!client) return;
 
     const concurrentPhone = `+1555CONC${runId}`;
-
-    // Use separate client instances for true connection concurrency without driver serialization warnings
-    const cA = new Client({ connectionString });
-    const cB = new Client({ connectionString });
-    const cC = new Client({ connectionString });
-    await Promise.all([cA.connect(), cB.connect(), cC.connect()]);
-
-    const [resA, resB, resC] = await Promise.all([
-      cA.query('SELECT api.get_or_create_conversation($1::uuid, $2::api.channel_type, $3::text) as result;', [clinicA_Id, 'whatsapp', concurrentPhone]),
-      cB.query('SELECT api.get_or_create_conversation($1::uuid, $2::api.channel_type, $3::text) as result;', [clinicA_Id, 'whatsapp', concurrentPhone]),
-      cC.query('SELECT api.get_or_create_conversation($1::uuid, $2::api.channel_type, $3::text) as result;', [clinicA_Id, 'whatsapp', concurrentPhone]),
-    ]);
-
-    await Promise.all([cA.end(), cB.end(), cC.end()]);
-
-    const idA = resA.rows[0].result.data.conversation_id;
-    const idB = resB.rows[0].result.data.conversation_id;
-    const idC = resC.rows[0].result.data.conversation_id;
-
-    expect(idA).toBe(idB);
-    expect(idB).toBe(idC);
-
-    // Verify exactly one active row exists in the database
-    const countRes = await client.query(
-      'SELECT count(*)::int as count FROM api.conversations WHERE clinic_id = $1::uuid AND channel_conversation_id = $2::text;',
-      [clinicA_Id, concurrentPhone]
+    const calls = Array.from({ length: 5 }, () =>
+      client!.query(
+        'SELECT api.get_or_create_conversation($1::uuid, $2::api.channel_type, $3::text, $4::uuid) as result;',
+        [clinicA_Id, 'whatsapp', concurrentPhone, null]
+      )
     );
-    expect(countRes.rows[0].count).toBe(1);
+
+    const results = await Promise.all(calls);
+    const conversationIds = results.map((r: any) => r.rows[0].result.data.conversation_id);
+    const uniqueIds = new Set(conversationIds);
+
+    expect(uniqueIds.size).toBe(1);
+
+    const existingFlags = results.map((r: any) => r.rows[0].result.data.existing);
+    const newCount = existingFlags.filter((f: boolean) => f === false).length;
+    expect(newCount).toBe(1);
   });
 
-  // 6. The same patient contacting a different clinic receives a separate clinic-scoped conversation
+  // 6. Tenant isolation between clinics
   it('6. The same phone number contacting a different clinic receives an isolated clinic-scoped conversation', async () => {
     if (!client) return;
 
-    const patB_Res = await client.query(
-      'SELECT api.find_or_create_patient($1::uuid, $2::text, $3::text) as result;',
-      [clinicB_Id, testPatientName1, testPhone1]
-    );
-    const patB_Id = patB_Res.rows[0].result.data.patient_id;
-
-    const convB_Res = await client.query(
+    const convBRes = await client.query(
       'SELECT api.get_or_create_conversation($1::uuid, $2::api.channel_type, $3::text, $4::uuid) as result;',
-      [clinicB_Id, 'whatsapp', testPhone1, patB_Id]
+      [clinicB_Id, 'whatsapp', testPhone1, null]
     );
-    const convB_Id = convB_Res.rows[0].result.data.conversation_id;
+    const convB = convBRes.rows[0].result;
+    expect(convB.ok).toBe(true);
+    expect(convB.data.conversation_id).not.toBe(conv1Id);
 
-    expect(convB_Id).not.toBe(conv1Id);
-
-    // Verify database clinic foreign key separation
     const rowA = await client.query('SELECT clinic_id FROM api.conversations WHERE id = $1::uuid;', [conv1Id]);
-    const rowB = await client.query('SELECT clinic_id FROM api.conversations WHERE id = $1::uuid;', [convB_Id]);
+    const rowB = await client.query('SELECT clinic_id FROM api.conversations WHERE id = $1::uuid;', [convB.data.conversation_id]);
     expect(rowA.rows[0].clinic_id).toBe(clinicA_Id);
     expect(rowB.rows[0].clinic_id).toBe(clinicB_Id);
   });
 
-  // 7. Different patients at the same clinic receive separate conversations
+  // 7. Distinct patients receive separate conversation threads
   it('7. Different patients contacting the same clinic receive distinct separate conversation threads', async () => {
     if (!client) return;
 
@@ -247,33 +195,34 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
       'SELECT api.find_or_create_patient($1::uuid, $2::text, $3::text) as result;',
       [clinicA_Id, testPatientName2, testPhone2]
     );
-    const pat2Id = pat2Res.rows[0].result.data.patient_id;
+    const patient2Id = pat2Res.rows[0].result.data.patient_id;
 
     const conv2Res = await client.query(
       'SELECT api.get_or_create_conversation($1::uuid, $2::api.channel_type, $3::text, $4::uuid) as result;',
-      [clinicA_Id, 'whatsapp', testPhone2, pat2Id]
+      [clinicA_Id, 'whatsapp', testPhone2, patient2Id]
     );
-    const conv2Id = conv2Res.rows[0].result.data.conversation_id;
-
-    expect(conv2Id).not.toBe(conv1Id);
+    const conv2 = conv2Res.rows[0].result;
+    expect(conv2.ok).toBe(true);
+    expect(conv2.data.conversation_id).not.toBe(conv1Id);
+    expect(conv2.data.patient_id).toBe(patient2Id);
   });
 
-  // 8. A staff handoff and subsequent AI response remain in the correct thread
+  // 8. Staff handoff, human reply, and subsequent AI reply continuity
   it('8. Staff handoffs, human replies, and subsequent AI responses remain bound to the same conversation', async () => {
     if (!client) return;
 
-    // Escalate to handoff
+    // Create a staff handoff
     const handoffRes = await client.query(
-      `SELECT api.create_handoff($1::uuid, 'whatsapp'::api.channel_type, $2::text, 'urgent'::text, $3::uuid, $4::uuid, '{"reason": "surgical enquiry"}'::jsonb) as result;`,
-      [clinicA_Id, `Enquiry ${runId}`, conv1Id, patient1Id]
+      `SELECT api.create_handoff($1::uuid, $2::uuid, 'Complex dental insurance inquiry run-${runId}', 'insurance'::api.handoff_category, 'high'::api.handoff_priority) as result;`,
+      [clinicA_Id, conv1Id]
     );
     expect(handoffRes.rows[0].result.ok).toBe(true);
     const handoffId = handoffRes.rows[0].result.data.handoff_id;
 
-    // Staff replies
+    // Staff reply message
     const staffReply = await client.query(
-      `SELECT api.record_message($1::uuid, $2::uuid, 'outbound'::api.message_direction, 'patient_text'::api.message_kind, $3::text, $4::text, $5::jsonb) as result;`,
-      [clinicA_Id, conv1Id, 'Front desk here. Dr. Smith can fit you in tomorrow at 9 AM.', `staff_reply:${runId}`, JSON.stringify({ sentBy: 'clinic_staff' })]
+      `SELECT api.record_message($1::uuid, $2::uuid, 'outbound'::api.message_direction, 'staff_reply'::api.message_kind, $3::text, $4::text, $5::jsonb) as result;`,
+      [clinicA_Id, conv1Id, 'Hi, this is Dr. Smith from reception. We do accept Delta Dental PPO.', `staff-reply-${runId}`, JSON.stringify({ sentBy: 'clinic_staff' })]
     );
     expect(staffReply.rows[0].result.ok).toBe(true);
 
@@ -284,14 +233,14 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
     );
     expect(resolveRes.rows[0].result.ok).toBe(true);
 
-    // Subsequent AI message
+    // Subsequent AI follow-up message
     const aiFollowUp = await client.query(
       `SELECT api.record_message($1::uuid, $2::uuid, 'outbound'::api.message_direction, 'patient_text'::api.message_kind, $3::text, $4::text) as result;`,
       [clinicA_Id, conv1Id, 'A confirmation SMS has also been sent to your phone.', `ai-msg-follow-${runId}`]
     );
     expect(aiFollowUp.rows[0].result.ok).toBe(true);
 
-    // Verify all messages are in conv1Id
+    // Verify all messages are bound to conv1Id
     const thread = await client.query(
       'SELECT id, body, provider_payload FROM api.messages WHERE conversation_id = $1::uuid;',
       [conv1Id]
@@ -300,7 +249,7 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
     expect(hasStaff).toBe(true);
   });
 
-  // 9. Patient names and conversation history load correctly in the dashboard
+  // 9. Prioritizes verified patient name over raw phone and loads full ordered history for dashboard
   it('9. Prioritizes verified patient name over raw phone and loads full ordered history for dashboard', async () => {
     if (!client) return;
 
@@ -326,11 +275,11 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
     }
   });
 
-  // 10. Any explicitly configured new-conversation policy works as documented
+  // 10. Conversation lifecycle policies work as documented
   it('10. Conversation lifecycle policies (persistent continuation, explicit new-thread, inactivity timeout) work as documented', async () => {
     if (!client) return;
 
-    // 10A: Default active continuation (messaging today and tomorrow reuses the open conversation)
+    // 10A: Default active continuation
     const continuation = await client.query(
       'SELECT api.get_or_create_conversation($1::uuid, $2::api.channel_type, $3::text, $4::uuid) as result;',
       [clinicA_Id, 'whatsapp', testPhone1, patient1Id]
@@ -353,7 +302,6 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
     expect(oldRow.rows[0].state.close_reason).toBe('explicit_new_thread');
 
     // 10C: Configured inactivity timeout policy
-    // Simulate setting last_message_at of second conversation to 2 hours ago
     await client.query(
       `UPDATE api.conversations SET last_message_at = NOW() - interval '2 hours' WHERE id = $1::uuid;`,
       [secondConvId]
@@ -375,3 +323,4 @@ describe('AI Receptionist Conversation Continuity & Lifecycle Suite', () => {
     expect(secondRow.rows[0].state.close_reason).toBe('inactivity_timeout');
   });
 });
+

@@ -17,9 +17,10 @@ import {
   Archive,
   Radio,
   Trash2,
+  CheckSquare,
 } from 'lucide-react';
 import { WhatsAppIntegrationSettings } from '../components/WhatsAppIntegrationSettings';
-import { DeleteConversationModal } from '../components/modals/DeleteConversationModal';
+import { DeleteConversationModal, DeleteConversationMode } from '../components/modals/DeleteConversationModal';
 
 export type ReceptionistTab = 'chats' | 'settings' | 'integration';
 
@@ -69,7 +70,10 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
 
   // Delete conversation confirmation modal state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteModalMode, setDeleteModalMode] = useState<DeleteConversationMode>('single');
   const [conversationToDelete, setConversationToDelete] = useState<any | null>(null);
+  const [selectedConversationIds, setSelectedConversationIds] = useState<Set<string>>(new Set());
+  const [totalConversationsCount, setTotalConversationsCount] = useState<number>(0);
   const [isDeletingConversation, setIsDeletingConversation] = useState(false);
 
   // Settings state
@@ -90,6 +94,19 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
       if (!silent) setLoadingConversations(true);
       const res = await api.getConversations({ pageSize: 40 });
       setConversations(res.items || []);
+      setTotalConversationsCount(res.total ?? res.items?.length ?? 0);
+
+      // Clean up any stale selected IDs that no longer exist
+      const availableIds = new Set((res.items || []).map((c: any) => c.id));
+      setSelectedConversationIds((prev) => {
+        if (prev.size === 0) return prev;
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (availableIds.has(id)) next.add(id);
+        }
+        return next;
+      });
+
       const currentSelected = selectedConversationIdRef.current;
       const targetId = preserveId || currentSelected || initialConversationId;
       if (targetId && res.items?.some((c: any) => c.id === targetId)) {
@@ -214,6 +231,56 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
           if (isDisposed || !e.data) return;
           try {
             const data = JSON.parse(e.data);
+
+            // Case A: Entire inbox deleted
+            if (data.all) {
+              setSelectedChat(null);
+              setSelectedConversationId(null);
+              selectedConversationIdRef.current = null;
+              setConversations([]);
+              setSelectedConversationIds(new Set());
+              setTotalConversationsCount(0);
+              window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { all: true } }));
+              window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
+              return;
+            }
+
+            // Case B: Multiple conversations deleted in bulk
+            if (Array.isArray(data.conversationIds) && data.conversationIds.length > 0) {
+              const idsSet = new Set<string>(data.conversationIds);
+              setSelectedChat((prevChat: any) => {
+                if (!prevChat) return null;
+                const currentChatId = prevChat.id || prevChat.conversation?.id;
+                if (idsSet.has(currentChatId)) return null;
+                return prevChat;
+              });
+
+              setConversations((prev) => {
+                const remaining = prev.filter((c) => !idsSet.has(c.id));
+                if (selectedConversationIdRef.current && idsSet.has(selectedConversationIdRef.current)) {
+                  const nextId = remaining[0]?.id || null;
+                  selectedConversationIdRef.current = nextId;
+                  setSelectedConversationId(nextId);
+                }
+                return remaining;
+              });
+
+              setSelectedConversationIds((prev) => {
+                let changed = false;
+                const next = new Set(prev);
+                for (const id of idsSet) {
+                  if (next.delete(id)) changed = true;
+                }
+                return changed ? next : prev;
+              });
+
+              setTotalConversationsCount((prev) => Math.max(0, prev - idsSet.size));
+              window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { conversationIds: data.conversationIds } }));
+              window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
+              return;
+            }
+
+            // Case C: Single conversation deleted
             const { conversationId } = data;
             if (!conversationId) return;
 
@@ -234,6 +301,15 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
               }
               return remaining;
             });
+
+            setSelectedConversationIds((prev) => {
+              if (!prev.has(conversationId)) return prev;
+              const next = new Set(prev);
+              next.delete(conversationId);
+              return next;
+            });
+
+            setTotalConversationsCount((prev) => Math.max(0, prev - 1));
 
             // Notify dashboard and badge in real time
             window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { conversationId } }));
@@ -286,12 +362,78 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
       }
     };
 
+    // Window event listener for cross-tab and cross-component deletion synchronization
+    const handleCrossTabDeleted = (e: any) => {
+      const detail = e.detail;
+      if (!detail || isDisposed) return;
+      if (detail.all) {
+        setSelectedChat(null);
+        setSelectedConversationId(null);
+        selectedConversationIdRef.current = null;
+        setConversations([]);
+        setSelectedConversationIds(new Set());
+        setTotalConversationsCount(0);
+      } else if (Array.isArray(detail.conversationIds) && detail.conversationIds.length > 0) {
+        const idsSet = new Set<string>(detail.conversationIds);
+        setSelectedChat((prevChat: any) => {
+          if (!prevChat) return null;
+          const currentChatId = prevChat.id || prevChat.conversation?.id;
+          if (idsSet.has(currentChatId)) return null;
+          return prevChat;
+        });
+        setConversations((prev) => {
+          const remaining = prev.filter((c) => !idsSet.has(c.id));
+          if (selectedConversationIdRef.current && idsSet.has(selectedConversationIdRef.current)) {
+            const nextId = remaining[0]?.id || null;
+            selectedConversationIdRef.current = nextId;
+            setSelectedConversationId(nextId);
+          }
+          return remaining;
+        });
+        setSelectedConversationIds((prev) => {
+          let changed = false;
+          const next = new Set(prev);
+          for (const id of idsSet) {
+            if (next.delete(id)) changed = true;
+          }
+          return changed ? next : prev;
+        });
+        setTotalConversationsCount((prev) => Math.max(0, prev - idsSet.size));
+      } else if (detail.conversationId) {
+        const targetId = detail.conversationId;
+        setSelectedChat((prevChat: any) => {
+          if (!prevChat) return null;
+          const currentChatId = prevChat.id || prevChat.conversation?.id;
+          if (currentChatId === targetId) return null;
+          return prevChat;
+        });
+        setConversations((prev) => {
+          const remaining = prev.filter((c) => c.id !== targetId);
+          if (selectedConversationIdRef.current === targetId) {
+            const nextId = remaining[0]?.id || null;
+            selectedConversationIdRef.current = nextId;
+            setSelectedConversationId(nextId);
+          }
+          return remaining;
+        });
+        setSelectedConversationIds((prev) => {
+          if (!prev.has(targetId)) return prev;
+          const next = new Set(prev);
+          next.delete(targetId);
+          return next;
+        });
+        setTotalConversationsCount((prev) => Math.max(0, prev - 1));
+      }
+    };
+
+    window.addEventListener('clinic:conversation_deleted', handleCrossTabDeleted);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       isDisposed = true;
       if (es) es.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      window.removeEventListener('clinic:conversation_deleted', handleCrossTabDeleted);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [loadConversations]);
@@ -312,6 +454,20 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
     setSendingReply(true);
     try {
       const res = await api.sendMessage(selectedConversationId, trimmed, resolveHandoffOnSend);
+
+      if (res?.conversationDeletedConcurrently) {
+        toast.warning(
+          'Message Delivered (Conversation Closed)',
+          'Your reply was successfully delivered to the patient via WhatsApp, but this conversation was deleted concurrently.'
+        );
+        setReplyText('');
+        setResolveHandoffOnSend(false);
+        setSelectedChat(null);
+        setSelectedConversationId(null);
+        setConversations((prev) => prev.filter((c) => c.id !== selectedConversationId));
+        return;
+      }
+
       toast.success(
         'Reply Sent',
         res.deliveryStatus === 'sent'
@@ -373,51 +529,169 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
 
   const handleOpenDeleteModal = (conv: any, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    setDeleteModalMode('single');
     setConversationToDelete(conv);
     setDeleteModalOpen(true);
   };
 
+  const handleOpenDeleteSelectedModal = () => {
+    if (selectedConversationIds.size === 0 || isDeletingConversation) return;
+    setDeleteModalMode('selected');
+    setDeleteModalOpen(true);
+  };
+
+  const handleOpenDeleteAllModal = () => {
+    if (conversations.length === 0 || isDeletingConversation) return;
+    setDeleteModalMode('all');
+    setDeleteModalOpen(true);
+  };
+
+  const handleToggleSelectConversation = (id: string) => {
+    setSelectedConversationIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    if (conversations.length === 0) return;
+    const allSelected = conversations.every((c) => selectedConversationIds.has(c.id));
+    if (allSelected) {
+      setSelectedConversationIds(new Set());
+    } else {
+      setSelectedConversationIds(new Set(conversations.map((c) => c.id)));
+    }
+  };
+
   const handleConfirmDeleteConversation = async () => {
-    if (!conversationToDelete || isDeletingConversation) return;
-    const targetId = conversationToDelete.id;
+    if (isDeletingConversation) return;
     setIsDeletingConversation(true);
+
     try {
-      await api.deleteConversation(targetId);
-      toast.success('Conversation Deleted', 'The conversation thread has been permanently removed.');
+      if (deleteModalMode === 'single') {
+        if (!conversationToDelete) return;
+        const targetId = conversationToDelete.id;
+        await api.deleteConversation(targetId);
+        toast.success('Conversation Deleted', 'The conversation thread has been permanently removed.');
 
-      // Immediately clear active chat if it matches the deleted conversation
-      setSelectedChat((prevChat: any) => {
-        if (!prevChat) return null;
-        const currentChatId = prevChat.id || prevChat.conversation?.id;
-        if (currentChatId === targetId) return null;
-        return prevChat;
-      });
+        // Immediately clear active chat if it matches the deleted conversation
+        setSelectedChat((prevChat: any) => {
+          if (!prevChat) return null;
+          const currentChatId = prevChat.id || prevChat.conversation?.id;
+          if (currentChatId === targetId) return null;
+          return prevChat;
+        });
 
-      setConversations((prev) => {
-        const remaining = prev.filter((c) => c.id !== targetId);
-        if (selectedConversationIdRef.current === targetId) {
-          const nextId = remaining[0]?.id || null;
-          selectedConversationIdRef.current = nextId;
-          setSelectedConversationId(nextId);
+        setConversations((prev) => {
+          const remaining = prev.filter((c) => c.id !== targetId);
+          if (selectedConversationIdRef.current === targetId) {
+            const nextId = remaining[0]?.id || null;
+            selectedConversationIdRef.current = nextId;
+            setSelectedConversationId(nextId);
+          }
+          return remaining;
+        });
+
+        setSelectedConversationIds((prev) => {
+          const next = new Set(prev);
+          next.delete(targetId);
+          return next;
+        });
+
+        setTotalConversationsCount((prev) => Math.max(0, prev - 1));
+
+        // Dispatch local and cross-tab events for dashboard and badge consistency
+        window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { conversationId: targetId } }));
+        window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
+        try {
+          const bc = new BroadcastChannel('dental_clinic_sync');
+          bc.postMessage({ type: 'CONVERSATION_DELETED', conversationId: targetId });
+          bc.close();
+        } catch {
+          // BroadcastChannel unavailable
         }
-        return remaining;
-      });
+      } else if (deleteModalMode === 'selected') {
+        const idsToDelete = Array.from(selectedConversationIds);
+        if (idsToDelete.length === 0) return;
+
+        const res = await api.deleteConversationsBulk(idsToDelete);
+        const deletedSet = new Set(res.deletedIds || idsToDelete);
+        const count = res.deletedCount || deletedSet.size;
+
+        toast.success(
+          'Conversations Deleted',
+          `Successfully deleted ${count} conversation${count === 1 ? '' : 's'}.`
+        );
+
+        setSelectedChat((prevChat: any) => {
+          if (!prevChat) return null;
+          const currentChatId = prevChat.id || prevChat.conversation?.id;
+          if (deletedSet.has(currentChatId)) return null;
+          return prevChat;
+        });
+
+        setConversations((prev) => {
+          const remaining = prev.filter((c) => !deletedSet.has(c.id));
+          if (selectedConversationIdRef.current && deletedSet.has(selectedConversationIdRef.current)) {
+            const nextId = remaining[0]?.id || null;
+            selectedConversationIdRef.current = nextId;
+            setSelectedConversationId(nextId);
+          }
+          return remaining;
+        });
+
+        setSelectedConversationIds(new Set());
+        setTotalConversationsCount((prev) => Math.max(0, prev - count));
+
+        for (const id of deletedSet) {
+          window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { conversationId: id } }));
+        }
+        window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
+        try {
+          const bc = new BroadcastChannel('dental_clinic_sync');
+          bc.postMessage({ type: 'CONVERSATION_DELETED', conversationIds: Array.from(deletedSet) });
+          bc.close();
+        } catch {
+          // BroadcastChannel unavailable
+        }
+      } else if (deleteModalMode === 'all') {
+        const res = await api.deleteAllConversations();
+        const count = res.deletedCount ?? totalConversationsCount;
+
+        toast.success(
+          'All Conversations Deleted',
+          `Successfully cleared all (${count}) conversation${count === 1 ? '' : 's'} from clinic inbox.`
+        );
+
+        setSelectedChat(null);
+        setSelectedConversationId(null);
+        selectedConversationIdRef.current = null;
+        setConversations([]);
+        setSelectedConversationIds(new Set());
+        setTotalConversationsCount(0);
+
+        window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { all: true } }));
+        window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
+        try {
+          const bc = new BroadcastChannel('dental_clinic_sync');
+          bc.postMessage({ type: 'CONVERSATION_DELETED', all: true });
+          bc.close();
+        } catch {
+          // BroadcastChannel unavailable
+        }
+      }
 
       setDeleteModalOpen(false);
       setConversationToDelete(null);
-
-      // Dispatch local and cross-tab events for dashboard and badge consistency
-      window.dispatchEvent(new CustomEvent('clinic:conversation_deleted', { detail: { conversationId: targetId } }));
-      window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
-      try {
-        const bc = new BroadcastChannel('dental_clinic_sync');
-        bc.postMessage({ type: 'CONVERSATION_DELETED', conversationId: targetId });
-        bc.close();
-      } catch {
-        // BroadcastChannel unavailable
-      }
     } catch (err: any) {
-      toast.error('Deletion Failed', err.message || 'Unable to delete conversation.');
+      toast.error('Deletion Failed', err.message || 'Unable to delete conversation(s).');
+      // If some were already removed or stale, refresh list to sync UI
+      await loadConversations(undefined, true);
     } finally {
       setIsDeletingConversation(false);
     }
@@ -582,26 +856,146 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                 flexShrink: 0,
               }}
             >
-              <h3 style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
-                Patient Conversations ({conversations.length})
-              </h3>
-              <button
-                onClick={() => loadConversations()}
-                title="Refresh Conversations"
-                aria-label="Refresh Conversations"
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {conversations.length > 0 && (
+                  <input
+                    type="checkbox"
+                    checked={conversations.length > 0 && conversations.every((c) => selectedConversationIds.has(c.id))}
+                    ref={(el) => {
+                      if (el) {
+                        const allSel = conversations.length > 0 && conversations.every((c) => selectedConversationIds.has(c.id));
+                        const someSel = selectedConversationIds.size > 0 && !allSel;
+                        el.indeterminate = someSel;
+                      }
+                    }}
+                    onChange={handleToggleSelectAll}
+                    disabled={isDeletingConversation || loadingConversations}
+                    title="Select all displayed conversations"
+                    aria-label="Select all displayed conversations"
+                    style={{
+                      cursor: isDeletingConversation ? 'not-allowed' : 'pointer',
+                      margin: 0,
+                      width: '14px',
+                      height: '14px',
+                      accentColor: 'var(--accent-primary)',
+                    }}
+                  />
+                )}
+                <h3 style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                  Patient Conversations ({conversations.length})
+                </h3>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {conversations.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleOpenDeleteAllModal}
+                    disabled={isDeletingConversation}
+                    title="Delete all conversations in this clinic"
+                    aria-label="Delete all conversations"
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-xs)',
+                      color: 'var(--text-secondary)',
+                      fontSize: '11px',
+                      padding: '2px 7px',
+                      cursor: isDeletingConversation ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = 'var(--danger)';
+                      e.currentTarget.style.borderColor = 'var(--danger)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = 'var(--text-secondary)';
+                      e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                    }}
+                  >
+                    <Trash2 size={11} />
+                    <span>Delete All</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => loadConversations()}
+                  disabled={isDeletingConversation}
+                  title="Refresh Conversations"
+                  aria-label="Refresh Conversations"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--text-secondary)',
+                    cursor: isDeletingConversation ? 'not-allowed' : 'pointer',
+                    padding: '3px',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <RefreshCw size={13} />
+                </button>
+              </div>
+            </div>
+
+            {/* Bulk Actions Toolbar */}
+            {selectedConversationIds.size > 0 && (
+              <div
                 style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  padding: '3px',
+                  padding: '7px 12px',
+                  backgroundColor: 'var(--accent-subtle)',
+                  borderBottom: '1px solid var(--accent-border, var(--border-subtle))',
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  fontSize: '12px',
+                  flexShrink: 0,
                 }}
               >
-                <RefreshCw size={13} />
-              </button>
-            </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                  <CheckSquare size={13} color="var(--accent-primary)" />
+                  <span>{selectedConversationIds.size} selected</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button
+                    type="button"
+                    onClick={handleOpenDeleteSelectedModal}
+                    disabled={isDeletingConversation}
+                    className="btn btn-danger"
+                    style={{
+                      height: '24px',
+                      padding: '0 8px',
+                      fontSize: '11px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      cursor: isDeletingConversation ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <Trash2 size={11} />
+                    <span>Delete Selected</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedConversationIds(new Set())}
+                    disabled={isDeletingConversation}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'var(--text-secondary)',
+                      fontSize: '11px',
+                      cursor: isDeletingConversation ? 'not-allowed' : 'pointer',
+                      padding: '2px 4px',
+                      textDecoration: 'underline',
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
               {loadingConversations ? (
@@ -615,6 +1009,7 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
               ) : (
                 conversations.map((c) => {
                   const isSelected = c.id === selectedConversationId;
+                  const isRowChecked = selectedConversationIds.has(c.id);
                   const needsAttention = c.handoffStatus === 'pending' || c.state === 'escalated';
                   const patientName = c.patientName || c.contactName || c.patient?.name || (c.patientPhone || c.contactPhone || c.phone) || 'Unknown contact';
 
@@ -625,95 +1020,122 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                       style={{
                         padding: '9px 12px',
                         borderBottom: '1px solid var(--border-subtle)',
-                        backgroundColor: isSelected ? 'var(--accent-subtle)' : 'transparent',
+                        backgroundColor: isSelected ? 'var(--accent-subtle)' : isRowChecked ? 'var(--bg-surface-secondary)' : 'transparent',
                         borderLeft: isSelected ? '3px solid var(--accent-primary)' : '3px solid transparent',
                         cursor: 'pointer',
                         transition: 'background-color 0.15s ease',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '9px',
                       }}
                       onMouseEnter={(e) => {
-                        if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                        if (!isSelected && !isRowChecked) e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
                       }}
                       onMouseLeave={(e) => {
-                        if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                        if (!isSelected && !isRowChecked) e.currentTarget.style.backgroundColor = 'transparent';
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '12.5px' }}>
-                          {patientName}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
-                            {formatTime(c.lastActivity || c.lastMessageAt || c.updatedAt || c.createdAt)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => handleOpenDeleteModal(c, e)}
-                            title="Delete conversation permanently"
-                            aria-label={`Delete conversation with ${patientName}`}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              color: 'var(--text-muted)',
-                              cursor: 'pointer',
-                              padding: '2px 4px',
-                              borderRadius: '4px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              lineHeight: 1,
-                              transition: 'color 0.15s ease, background-color 0.15s ease',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.color = 'var(--danger)';
-                              e.currentTarget.style.backgroundColor = 'var(--danger-subtle)';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.color = 'var(--text-muted)';
-                              e.currentTarget.style.backgroundColor = 'transparent';
-                            }}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ paddingTop: '2px', display: 'flex', alignItems: 'center', flexShrink: 0 }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isRowChecked}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            handleToggleSelectConversation(c.id);
+                          }}
+                          disabled={isDeletingConversation}
+                          aria-label={`Select conversation with ${patientName}`}
+                          style={{
+                            cursor: isDeletingConversation ? 'not-allowed' : 'pointer',
+                            margin: 0,
+                            width: '14px',
+                            height: '14px',
+                            accentColor: 'var(--accent-primary)',
+                          }}
+                        />
                       </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '12.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {patientName}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
+                              {formatTime(c.lastActivity || c.lastMessageAt || c.updatedAt || c.createdAt)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleOpenDeleteModal(c, e)}
+                              title="Delete conversation permanently"
+                              aria-label={`Delete conversation with ${patientName}`}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'var(--text-muted)',
+                                cursor: 'pointer',
+                                padding: '2px 4px',
+                                borderRadius: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                lineHeight: 1,
+                                transition: 'color 0.15s ease, background-color 0.15s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.color = 'var(--danger)';
+                                e.currentTarget.style.backgroundColor = 'var(--danger-subtle)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.color = 'var(--text-muted)';
+                                e.currentTarget.style.backgroundColor = 'transparent';
+                              }}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
 
-                      <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                        {c.patientPhone || c.contactPhone || c.phone || ''}
-                      </div>
+                        <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                          {c.patientPhone || c.contactPhone || c.phone || ''}
+                        </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
-                        {needsAttention ? (
-                          <span
-                            style={{
-                              fontSize: '10.5px',
-                              fontWeight: 600,
-                              color: 'var(--warning)',
-                              backgroundColor: 'var(--warning-subtle)',
-                              padding: '1px 6px',
-                              borderRadius: '4px',
-                              border: '1px solid rgba(194, 91, 16, 0.2)',
-                            }}
-                          >
-                            Needs Staff Attention
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                          {needsAttention ? (
+                            <span
+                              style={{
+                                fontSize: '10.5px',
+                                fontWeight: 600,
+                                color: 'var(--warning)',
+                                backgroundColor: 'var(--warning-subtle)',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                border: '1px solid rgba(194, 91, 16, 0.2)',
+                              }}
+                            >
+                              Needs Staff Attention
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                fontSize: '10.5px',
+                                fontWeight: 500,
+                                color: 'var(--success)',
+                                backgroundColor: 'var(--success-subtle)',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                border: '1px solid rgba(46, 125, 50, 0.2)',
+                              }}
+                            >
+                              AI Handled
+                            </span>
+                          )}
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            {c.messageCount || 0} messages
                           </span>
-                        ) : (
-                          <span
-                            style={{
-                              fontSize: '10.5px',
-                              fontWeight: 500,
-                              color: 'var(--success)',
-                              backgroundColor: 'var(--success-subtle)',
-                              padding: '1px 6px',
-                              borderRadius: '4px',
-                              border: '1px solid rgba(46, 125, 50, 0.2)',
-                            }}
-                          >
-                            AI Handled
-                          </span>
-                        )}
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                          {c.messageCount || 0} messages
-                        </span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1266,7 +1688,10 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
       {/* Delete Conversation Confirmation Dialog */}
       <DeleteConversationModal
         isOpen={deleteModalOpen}
+        mode={deleteModalMode}
         conversation={conversationToDelete}
+        selectedCount={selectedConversationIds.size}
+        totalCount={totalConversationsCount || conversations.length}
         onClose={() => {
           if (!isDeletingConversation) {
             setDeleteModalOpen(false);

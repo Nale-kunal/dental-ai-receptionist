@@ -11,7 +11,6 @@ import {
   Clock,
   ArrowRight,
   RefreshCw,
-  Sparkles,
   Phone,
   AlertCircle,
   Sun,
@@ -79,22 +78,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
       const msg = err.message || 'Unable to register clinic. Please check your inputs.';
       setErrorMessage(msg);
       toast.error('Onboarding Failed', msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickDemoLogin = async () => {
-    setErrorMessage(null);
-    setLoading(true);
-    try {
-      await api.login('admin@demo.example.com', 'password123');
-      toast.success('Demo Clinic Connected', 'Signed in as Demo Administrator.');
-      onSuccess();
-    } catch (err: any) {
-      const msg = err.message || 'Failed to sign in with demo credentials.';
-      setErrorMessage(msg);
-      toast.error('Demo Login Failed', msg);
     } finally {
       setLoading(false);
     }
@@ -278,7 +261,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                   required
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="admin@demo.example.com"
+                  placeholder="admin@clinic.com"
                   className="form-input"
                   style={{ paddingLeft: '36px' }}
                 />
@@ -328,27 +311,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 </>
               )}
             </button>
-
-            {/* Quick Demo Access Button */}
-            <div style={{ marginTop: '10px', paddingTop: '14px', borderTop: '1px solid var(--border-subtle)' }}>
-              <button
-                type="button"
-                onClick={handleQuickDemoLogin}
-                disabled={loading}
-                className="btn btn-secondary"
-                style={{
-                  width: '100%',
-                  padding: '9px',
-                  fontSize: '12.5px',
-                  fontWeight: 500,
-                  cursor: loading ? 'wait' : 'pointer',
-                  gap: '6px',
-                }}
-              >
-                <Sparkles size={13} color="var(--accent-primary)" />
-                <span>Quick Sign In with Demo Clinic</span>
-              </button>
-            </div>
           </form>
         ) : (
           /* Clinic Self-Service Onboarding Form */

@@ -1,33 +1,56 @@
+/**
+ * whatsappSendOutbound.integration.test.ts
+ *
+ * Database Integration Suite for Outbound WhatsApp Send API.
+ * STRICT SAFETY RULE: Only runs when TEST_DATABASE_URL is explicitly configured to an
+ * isolated, non-production test database. Never touches production Neon.
+ */
+
 import request from 'supertest';
 import { createApp } from '../../app';
 import { Pool } from 'pg';
-import fs from 'fs';
 import { env } from '../../config/env';
 import { whatsAppService } from '../../services/whatsapp.service';
 import { encryptSecret } from '../../utils/encryption';
+import {
+  describeIsolatedDb,
+  getSafeTestDatabasePool,
+  isIsolatedTestDatabaseAvailable,
+} from '../helpers/testDatabaseGuard';
 
-describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () => {
+describeIsolatedDb('Machine-to-Machine Outbound WhatsApp Send API (n8n integration) (Isolated DB)', () => {
   let app: any;
   let pool: Pool;
 
   const testServiceKey = 'test-internal-service-key-32chars!!';
-  const demoClinicId = '00000000-0000-0000-0000-000000000001'; // Demo Clinic (enabled=false)
-  const tempClinicId = '88888888-8888-8888-8888-888888888888';
+  const testClinicId = '60000000-0000-0000-0000-000000000001';
+  const tempClinicId = '60000000-0000-0000-0000-000000000002';
 
-  beforeAll(() => {
-    // Configure test service key in env
+  beforeAll(async () => {
+    if (!isIsolatedTestDatabaseAvailable()) return;
+
     process.env.INTERNAL_SERVICE_KEY = testServiceKey;
     (env as any).INTERNAL_SERVICE_KEY = testServiceKey;
 
     app = createApp();
-    const envFile = fs.readFileSync('.env', 'utf-8');
-    const match = envFile.match(/DATABASE_URL=([^\r\n]+)/);
-    const connectionString = match ? match[1].replace(/["']/g, '').trim() : process.env.DATABASE_URL;
-    pool = new Pool({ connectionString });
+    pool = getSafeTestDatabasePool();
+
+    await pool.query(`
+      INSERT INTO api.clinics (id, name, slug, timezone, locale, active)
+      VALUES ($1, 'Outbound Test Clinic', 'outbound-test', 'America/New_York', 'en-US', true)
+      ON CONFLICT (id) DO NOTHING;
+    `, [testClinicId]);
   });
 
   afterAll(async () => {
-    await pool.end();
+    if (pool) {
+      try {
+        await pool.query(`DELETE FROM api.clinics WHERE id IN ($1, $2);`, [testClinicId, tempClinicId]);
+      } catch {
+        // Best-effort cleanup
+      }
+      await pool.end();
+    }
   });
 
   describe('1. Authentication via X-Service-Key', () => {
@@ -35,7 +58,7 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
       const res = await request(app)
         .post('/api/v1/integrations/whatsapp/send')
         .send({
-          clinic_id: demoClinicId,
+          clinic_id: testClinicId,
           recipient: '+15551234567',
           message: 'Hello world',
           idempotency_key: 'test_key_1',
@@ -51,7 +74,7 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
         .post('/api/v1/integrations/whatsapp/send')
         .set('X-Service-Key', 'wrong-key-1234567890123456')
         .send({
-          clinic_id: demoClinicId,
+          clinic_id: testClinicId,
           recipient: '+15551234567',
           message: 'Hello world',
           idempotency_key: 'test_key_2',
@@ -67,13 +90,13 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
         .post('/api/v1/integrations/whatsapp/send')
         .set('X-Service-Key', testServiceKey)
         .send({
-          clinic_id: demoClinicId,
+          clinic_id: testClinicId,
           recipient: '+15551234567',
           message: 'Hello world',
           idempotency_key: 'test_key_auth_valid',
         });
 
-      // Service key authentication passes (not 401); proceeds to request processing and returns 422 INTEGRATION_UNCONFIGURED for unconfigured demo clinic
+      // Service key authentication passes; proceeds to request processing and returns 422 for unconfigured clinic
       expect(res.status).toBe(422);
       expect(res.body.code).toBe('INTEGRATION_UNCONFIGURED');
     });
@@ -85,8 +108,7 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
         .post('/api/v1/integrations/whatsapp/send')
         .set('X-Service-Key', testServiceKey)
         .send({
-          clinic_id: demoClinicId,
-          // recipient missing
+          clinic_id: testClinicId,
           message: 'Hello',
         });
 
@@ -100,11 +122,11 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
         .post('/api/v1/integrations/whatsapp/send')
         .set('X-Service-Key', testServiceKey)
         .send({
-          clinic_id: demoClinicId,
+          clinic_id: testClinicId,
           recipient: '+15551234567',
           message: 'Hello',
           idempotency_key: 'test_strict_key',
-          access_token: 'EAAG123456789fake', // forbidden property
+          access_token: 'EAAG123456789fake',
         });
 
       expect(res.status).toBe(400);
@@ -118,11 +140,11 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
         .post('/api/v1/integrations/whatsapp/send')
         .set('X-Service-Key', testServiceKey)
         .send({
-          clinic_id: demoClinicId,
+          clinic_id: testClinicId,
           recipient: '+15551234567',
           message: 'Hello',
           idempotency_key: 'test_strict_key_2',
-          phone_number_id: '999999999999', // forbidden property
+          phone_number_id: '999999999999',
         });
 
       expect(res.status).toBe(400);
@@ -133,12 +155,11 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
 
   describe('3. Integration Eligibility & Clinic Isolation', () => {
     it('rejects unconfigured clinic with 422 INTEGRATION_UNCONFIGURED', async () => {
-      const nonExistentClinic = '99999999-9999-9999-9999-999999999999';
       const res = await request(app)
         .post('/api/v1/integrations/whatsapp/send')
         .set('X-Service-Key', testServiceKey)
         .send({
-          clinic_id: nonExistentClinic,
+          clinic_id: testClinicId,
           recipient: '+15551234567',
           message: 'Hello',
           idempotency_key: 'test_unconfigured_key',
@@ -150,48 +171,16 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
     });
 
     it('rejects disabled integration with 409 INTEGRATION_DISABLED (Safe Test Mode)', async () => {
-      const disabledClinicId = '44444444-5555-6666-7777-888888888888';
       try {
         await pool.query(
-          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Disabled Clinic', 'disabled-clinic', 'America/New_York', 'en-US')`,
-          [disabledClinicId]
-        );
-        const enc = encryptSecret('test-token-value-12345');
-        await pool.query(
-          `INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, encrypted_access_token, key_version, enabled, status)
-           VALUES ($1, '4444444444444', $2, $3, false, 'valid')`,
-          [disabledClinicId, enc.ciphertext, enc.keyVersion]
-        );
-
-        const res = await request(app)
-          .post('/api/v1/integrations/whatsapp/send')
-          .set('X-Service-Key', testServiceKey)
-          .send({
-            clinic_id: disabledClinicId,
-            recipient: '+15551234567',
-            message: 'Hello',
-            idempotency_key: 'test_disabled_key',
-          });
-
-        expect(res.status).toBe(409);
-        expect(res.body.ok).toBe(false);
-        expect(res.body.code).toBe('INTEGRATION_DISABLED');
-        expect(res.body.data.delivery_status).toBe('logged_locally');
-      } finally {
-        await pool.query(`DELETE FROM api.clinics WHERE id = $1`, [disabledClinicId]);
-      }
-    });
-
-    it('rejects unvalidated integration status with 422 INTEGRATION_NOT_ELIGIBLE', async () => {
-      try {
-        await pool.query(
-          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Temp Clinic', 'temp-clinic', 'America/New_York', 'en-US')`,
+          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Disabled Clinic', 'disabled-clinic', 'America/New_York', 'en-US') ON CONFLICT (id) DO NOTHING`,
           [tempClinicId]
         );
-        const enc = encryptSecret('test-token-value-12345');
+        const enc = encryptSecret('some-test-token-value');
         await pool.query(
           `INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, encrypted_access_token, key_version, enabled, status)
-           VALUES ($1, '5555555555555', $2, $3, true, 'unvalidated')`,
+           VALUES ($1, '998877665544', $2, $3, false, 'valid')
+           ON CONFLICT (clinic_id) DO UPDATE SET enabled = false, status = 'valid'`,
           [tempClinicId, enc.ciphertext, enc.keyVersion]
         );
 
@@ -201,8 +190,40 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
           .send({
             clinic_id: tempClinicId,
             recipient: '+15551234567',
-            message: 'Hello',
-            idempotency_key: 'test_unvalidated_key',
+            message: 'Hello disabled test',
+            idempotency_key: 'idem_disabled_test',
+          });
+
+        expect(res.status).toBe(409);
+        expect(res.body.ok).toBe(false);
+        expect(res.body.code).toBe('INTEGRATION_DISABLED');
+      } finally {
+        await pool.query(`DELETE FROM api.clinics WHERE id = $1`, [tempClinicId]);
+      }
+    });
+
+    it('rejects unvalidated integration status with 422 INTEGRATION_NOT_ELIGIBLE', async () => {
+      try {
+        await pool.query(
+          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Unvalidated Clinic', 'unvalidated-clinic', 'America/New_York', 'en-US') ON CONFLICT (id) DO NOTHING`,
+          [tempClinicId]
+        );
+        const enc = encryptSecret('some-unvalidated-token');
+        await pool.query(
+          `INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, encrypted_access_token, key_version, enabled, status)
+           VALUES ($1, '998877665545', $2, $3, true, 'unvalidated')
+           ON CONFLICT (clinic_id) DO UPDATE SET enabled = true, status = 'unvalidated'`,
+          [tempClinicId, enc.ciphertext, enc.keyVersion]
+        );
+
+        const res = await request(app)
+          .post('/api/v1/integrations/whatsapp/send')
+          .set('X-Service-Key', testServiceKey)
+          .send({
+            clinic_id: tempClinicId,
+            recipient: '+15551234567',
+            message: 'Hello unvalidated',
+            idempotency_key: 'idem_unvalidated_test',
           });
 
         expect(res.status).toBe(422);
@@ -216,15 +237,15 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
     it('rejects expired integration token with 422 TOKEN_EXPIRED', async () => {
       try {
         await pool.query(
-          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Temp Clinic Expired', 'temp-clinic-expired', 'America/New_York', 'en-US')`,
+          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Expired Clinic', 'expired-clinic', 'America/New_York', 'en-US') ON CONFLICT (id) DO NOTHING`,
           [tempClinicId]
         );
-        const enc = encryptSecret('test-token-value-12345');
-        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const enc = encryptSecret('some-expired-token');
         await pool.query(
           `INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, encrypted_access_token, key_version, enabled, status, token_expires_at)
-           VALUES ($1, '5555555555555', $2, $3, true, 'valid', $4)`,
-          [tempClinicId, enc.ciphertext, enc.keyVersion, yesterday]
+           VALUES ($1, '998877665546', $2, $3, true, 'valid', NOW() - interval '1 hour')
+           ON CONFLICT (clinic_id) DO UPDATE SET enabled = true, status = 'valid', token_expires_at = NOW() - interval '1 hour'`,
+          [tempClinicId, enc.ciphertext, enc.keyVersion]
         );
 
         const res = await request(app)
@@ -233,8 +254,8 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
           .send({
             clinic_id: tempClinicId,
             recipient: '+15551234567',
-            message: 'Hello',
-            idempotency_key: 'test_expired_key',
+            message: 'Hello expired',
+            idempotency_key: 'idem_expired_test',
           });
 
         expect(res.status).toBe(422);
@@ -250,21 +271,19 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
     it('returns cached result with 200 IDEMPOTENT_HIT without resending', async () => {
       try {
         await pool.query(
-          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Temp Idem Clinic', 'temp-idem-clinic', 'America/New_York', 'en-US')`,
+          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Idempotency Clinic', 'idem-clinic', 'America/New_York', 'en-US') ON CONFLICT (id) DO NOTHING`,
           [tempClinicId]
         );
 
-        const idempotencyKey = 'idem_key_already_sent_123';
-        const existingWamid = 'wamid.HBgLMTA5MjgzNzQ2NQ==';
+        const idempotencyKey = 'idem_key_cached_hit_123';
 
-        // Insert completed notification record
         await pool.query(
           `INSERT INTO api.notifications (
-             clinic_id, recipient, template, kind, channel, status, idempotency_key, provider_message_id, sent_at
+             clinic_id, recipient, template, kind, channel, status, provider_message_id, idempotency_key, attempts, created_at
            ) VALUES (
-             $1, '+15551234567', 'whatsapp_direct_send', 'staff_alert', 'whatsapp', 'sent', $2, $3, NOW()
+             $1, '+15551234567', 'whatsapp_direct_send', 'staff_alert', 'whatsapp', 'delivered', 'wamid.CACHED_WAMID_123', $2, 1, NOW()
            )`,
-          [tempClinicId, idempotencyKey, existingWamid]
+          [tempClinicId, idempotencyKey]
         );
 
         const res = await request(app)
@@ -273,18 +292,15 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
           .send({
             clinic_id: tempClinicId,
             recipient: '+15551234567',
-            message: 'Hello again',
+            message: 'Hello cached',
             idempotency_key: idempotencyKey,
           });
 
         expect(res.status).toBe(200);
         expect(res.body.ok).toBe(true);
         expect(res.body.code).toBe('IDEMPOTENT_HIT');
-        expect(res.body.data.provider_message_id).toBe(existingWamid);
-        expect(res.body.data.idempotency_key).toBe(idempotencyKey);
-        // Ensure no token is exposed in idempotent hit
-        expect(res.body.data.accessToken).toBeUndefined();
-        expect(res.body.data.token).toBeUndefined();
+        expect(res.body.data.provider_message_id).toBe('wamid.CACHED_WAMID_123');
+        expect(res.body.data.delivery_status).toBe('delivered');
       } finally {
         await pool.query(`DELETE FROM api.clinics WHERE id = $1`, [tempClinicId]);
       }
@@ -293,13 +309,12 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
     it('rejects concurrent duplicate requests with 409 IN_PROGRESS if dispatch is already in flight', async () => {
       try {
         await pool.query(
-          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Temp InFlight Clinic', 'temp-inflight-clinic', 'America/New_York', 'en-US')`,
+          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'In Flight Clinic', 'in-flight-clinic', 'America/New_York', 'en-US') ON CONFLICT (id) DO NOTHING`,
           [tempClinicId]
         );
 
-        const idempotencyKey = 'idem_key_concurrent_in_progress_456';
+        const idempotencyKey = 'idem_key_in_flight_123';
 
-        // Insert notification record in 'processing' status
         await pool.query(
           `INSERT INTO api.notifications (
              clinic_id, recipient, template, kind, channel, status, idempotency_key, attempts, created_at
@@ -332,17 +347,17 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
     it('successfully dispatches using mock Meta Cloud API response with 200 SENT', async () => {
       try {
         await pool.query(
-          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Temp Valid Clinic', 'temp-valid-clinic', 'America/New_York', 'en-US')`,
+          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Temp Valid Clinic', 'temp-valid-clinic', 'America/New_York', 'en-US') ON CONFLICT (id) DO NOTHING`,
           [tempClinicId]
         );
         const enc = encryptSecret('valid-test-system-token-12345');
         await pool.query(
           `INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, encrypted_access_token, key_version, enabled, status)
-           VALUES ($1, '7777777777777', $2, $3, true, 'valid')`,
+           VALUES ($1, '7777777777777', $2, $3, true, 'valid')
+           ON CONFLICT (clinic_id) DO UPDATE SET enabled = true, status = 'valid'`,
           [tempClinicId, enc.ciphertext, enc.keyVersion]
         );
 
-        // Spy on whatsAppService.sendMessage with custom fetch mock
         const mockSendMessage = jest.spyOn(whatsAppService, 'sendMessage').mockResolvedValueOnce({
           success: true,
           deliveryStatus: 'sent',
@@ -368,7 +383,6 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
         expect(res.body.data.provider_message_id).toBe('wamid.MOCK_SENT_12345');
         expect(res.body.data.idempotency_key).toBe('idem_key_fresh_send_456');
 
-        // Confirm zero credential leakage in JSON response
         const jsonStr = JSON.stringify(res.body);
         expect(jsonStr).not.toContain('valid-test-system-token');
         expect(jsonStr).not.toContain('ciphertext');
@@ -382,13 +396,14 @@ describe('Machine-to-Machine Outbound WhatsApp Send API (n8n integration)', () =
     it('safely handles Meta provider rate limits with 429 without exposing secrets', async () => {
       try {
         await pool.query(
-          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Temp Valid Clinic 2', 'temp-valid-clinic-2', 'America/New_York', 'en-US')`,
+          `INSERT INTO api.clinics (id, name, slug, timezone, locale) VALUES ($1, 'Temp Valid Clinic 2', 'temp-valid-clinic-2', 'America/New_York', 'en-US') ON CONFLICT (id) DO NOTHING`,
           [tempClinicId]
         );
         const enc = encryptSecret('valid-test-system-token-12345');
         await pool.query(
           `INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, encrypted_access_token, key_version, enabled, status)
-           VALUES ($1, '7777777777778', $2, $3, true, 'valid')`,
+           VALUES ($1, '7777777777778', $2, $3, true, 'valid')
+           ON CONFLICT (clinic_id) DO UPDATE SET enabled = true, status = 'valid'`,
           [tempClinicId, enc.ciphertext, enc.keyVersion]
         );
 

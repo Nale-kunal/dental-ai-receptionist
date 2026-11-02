@@ -544,6 +544,8 @@ class ApiClient {
       providerMessageId?: string;
       createdAt: string;
       handoffResolved?: boolean;
+      conversationDeletedConcurrently?: boolean;
+      deliveryHistoryPreserved?: boolean;
     }>(`/conversations/${conversationId}/messages`, {
       method: 'POST',
       body: JSON.stringify({ body, resolveHandoff }),
@@ -560,6 +562,20 @@ class ApiClient {
   public async deleteConversation(id: string) {
     return this.request<{ id: string; deleted: boolean }>(`/conversations/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  public async deleteConversationsBulk(conversationIds: string[]) {
+    return this.request<{ deletedCount: number; deletedIds: string[] }>('/conversations/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify({ conversationIds }),
+    });
+  }
+
+  public async deleteAllConversations() {
+    return this.request<{ deletedCount: number; deletedIds: string[] }>('/conversations/delete-all', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
     });
   }
 
