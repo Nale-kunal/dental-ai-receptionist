@@ -45,7 +45,7 @@ describeIsolatedDb('Receptionist Settings & WhatsApp Integration API Suite (Isol
     // Provision isolated test clinic fixtures
     await pool.query(`
       INSERT INTO api.clinics (id, name, slug, timezone, active)
-      VALUES 
+      VALUES
         ($1, 'Test Dental Clinic A', 'test-clinic-a', 'America/New_York', true),
         ($2, 'Test Configured Clinic B', 'test-clinic-b', 'America/New_York', true)
       ON CONFLICT (id) DO NOTHING;
@@ -326,4 +326,3 @@ describeIsolatedDb('Receptionist Settings & WhatsApp Integration API Suite (Isol
     });
   });
 });
-

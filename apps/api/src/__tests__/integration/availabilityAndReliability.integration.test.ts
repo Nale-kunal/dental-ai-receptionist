@@ -51,7 +51,7 @@ describeIsolatedDb('Dental AI Receptionist — Reliability, Availability & Real-
     // Provision test clinic fixtures in isolated test database
     await client.query(`
       INSERT INTO api.clinics (id, name, slug, timezone, locale, active)
-      VALUES 
+      VALUES
         ($1, 'Test Reliability Clinic A', 'test-rel-a', 'America/New_York', 'en-US', true),
         ($2, 'Test Reliability Clinic B', 'test-rel-b', 'America/New_York', 'en-US', true)
       ON CONFLICT (id) DO NOTHING;
@@ -73,7 +73,7 @@ describeIsolatedDb('Dental AI Receptionist — Reliability, Availability & Real-
     // Provision standard business hours (Monday & Tuesday 09:00 - 17:00)
     await client.query(`
       INSERT INTO api.business_hours (clinic_id, day_of_week, open_time, close_time, is_closed)
-      VALUES 
+      VALUES
         ($1, 1, '09:00', '17:00', false),
         ($1, 2, '09:00', '17:00', false)
       ON CONFLICT (clinic_id, day_of_week) DO NOTHING;

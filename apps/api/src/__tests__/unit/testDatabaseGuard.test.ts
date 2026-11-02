@@ -117,6 +117,43 @@ describe('Test Database Safety Guard (Unit)', () => {
       }
     });
 
+    it('strictly rejects URL-encoded production host indicators and project IDs', () => {
+      const urls = [
+        'postgres://user:secret@ep%2Dempty%2Dsalad%2Db3cw8xsj.internal-proxy:5432/test_db',
+        'postgresql://user:pass@subdomain.%6Eeon.tech:5432/test_db',
+      ];
+
+      for (const url of urls) {
+        const result = validateTestDatabaseSafety(url);
+        expect(result.isSafe).toBe(false);
+        expect(result.reason).toMatch(/forbidden host or provider|neon\.tech|ep-empty-salad-b3cw8xsj/i);
+      }
+    });
+
+    it('strictly rejects URL-encoded production database names', () => {
+      const urls = [
+        'postgresql://user:pass@localhost:5432/neon%64b',
+        'postgresql://user:pass@localhost:5432/production%5Fclinic',
+        'postgresql://user:pass@localhost:5432/clinic%5Fprod%5Fdb',
+      ];
+
+      for (const url of urls) {
+        const result = validateTestDatabaseSafety(url);
+        expect(result.isSafe).toBe(false);
+        expect(result.reason).toMatch(/forbidden production database name/i);
+      }
+    });
+
+    it('strictly rejects equivalent targets with differing query parameters or URL encodings', () => {
+      process.env.DATABASE_URL = 'postgresql://admin:secret@127.0.0.1:5432/dental_core?sslmode=require';
+
+      // Test candidate targets same database with different query parameters and percent-encoding
+      const candidateWithDifferentParams = 'postgresql://otheruser:otherpass@127.0.0.1:5432/dental%5Fcore?connect_timeout=10';
+      const result = validateTestDatabaseSafety(candidateWithDifferentParams);
+      expect(result.isSafe).toBe(false);
+      expect(result.reason).toContain('resolves to the same host, port, and database as the application production DATABASE_URL');
+    });
+
     it('accepts valid, isolated local test database URLs', () => {
       process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/dev_db';
 

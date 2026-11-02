@@ -29,7 +29,7 @@ describeIsolatedDb('WhatsApp Multi-Tenant Integration & Security Suite (Isolated
     // Provision test clinics in isolated test database
     await pool.query(`
       INSERT INTO api.clinics (id, name, slug, timezone, active)
-      VALUES 
+      VALUES
         ($1, 'Configured Test Clinic', 'cfg-test-clinic', 'America/New_York', true),
         ($2, 'Unconfigured Test Clinic', 'uncfg-test-clinic', 'America/New_York', true)
       ON CONFLICT (id) DO NOTHING;

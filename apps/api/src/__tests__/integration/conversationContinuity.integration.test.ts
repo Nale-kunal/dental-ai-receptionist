@@ -36,7 +36,7 @@ describeIsolatedDb('AI Receptionist Conversation Continuity & Lifecycle Suite (I
     // Provision test clinics in isolated test database
     await client.query(`
       INSERT INTO api.clinics (id, name, slug, timezone, locale, active)
-      VALUES 
+      VALUES
         ($1, 'Continuity Test Clinic A', 'continuity-a-' || $3, 'America/New_York', 'en-US', true),
         ($2, 'Continuity Test Clinic B', 'continuity-b-' || $3, 'America/New_York', 'en-US', true)
       ON CONFLICT (id) DO NOTHING;
@@ -323,4 +323,3 @@ describeIsolatedDb('AI Receptionist Conversation Continuity & Lifecycle Suite (I
     expect(secondRow.rows[0].state.close_reason).toBe('inactivity_timeout');
   });
 });
-

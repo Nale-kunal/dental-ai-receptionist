@@ -20,6 +20,12 @@
 import { Pool, Client } from 'pg';
 import { setPrismaDatabaseUrl } from '../../database/prisma/client';
 
+// Preserve initial ambient environment URLs to guarantee that even after
+// ambient DATABASE_URL is neutralized to dummy in tests, any test URL matching
+// the original production target is strictly blocked.
+const initialAmbientDatabaseUrl = process.env.DATABASE_URL;
+const initialAmbientDirectUrl = process.env.DIRECT_URL;
+
 export interface NormalizedPostgresUrl {
   raw: string;
   protocol: string;
@@ -33,9 +39,9 @@ export interface NormalizedPostgresUrl {
  * Parses and normalizes a PostgreSQL connection URL.
  * Strictly handles:
  * - Protocol normalization (postgres:// vs postgresql://)
- * - Hostname lowercasing
+ * - Hostname lowercasing and percent-decoding
  * - Default PostgreSQL port of 5432 when omitted or specified explicitly
- * - Database path normalization (lowercase, stripped of leading slash and query params)
+ * - Database path normalization (lowercase, percent-decoded, stripped of leading slash and query params)
  */
 export function parseAndNormalizePostgresUrl(rawUrl?: string): NormalizedPostgresUrl | null {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
@@ -53,7 +59,12 @@ export function parseAndNormalizePostgresUrl(rawUrl?: string): NormalizedPostgre
       return null;
     }
 
-    const host = parsed.hostname.toLowerCase();
+    let host = parsed.hostname.toLowerCase();
+    try {
+      host = decodeURIComponent(host);
+    } catch {
+      // Best-effort decode
+    }
     if (!host) return null;
 
     // PostgreSQL default port is 5432
@@ -61,7 +72,13 @@ export function parseAndNormalizePostgresUrl(rawUrl?: string): NormalizedPostgre
     if (isNaN(port) || port <= 0 || port > 65535) return null;
 
     // Extract database name from pathname (stripping leading slashes and query strings)
-    const database = parsed.pathname.replace(/^\/+/, '').split('?')[0].toLowerCase();
+    let rawDb = parsed.pathname.replace(/^\/+/, '').split('?')[0];
+    try {
+      rawDb = decodeURIComponent(rawDb);
+    } catch {
+      // Best-effort decode
+    }
+    const database = rawDb.toLowerCase();
     if (!database) return null;
 
     return {
@@ -121,8 +138,14 @@ export function validateTestDatabaseSafety(candidateUrl?: string): TestDbSafetyC
     };
   }
 
-  // 3. Detect and reject production Neon hosts and project identifiers
-  const lowerUrl = rawTestUrl.toLowerCase();
+  // 3. Detect and reject production Neon hosts and project identifiers (including percent-encoded variants)
+  let lowerUrl = rawTestUrl.toLowerCase();
+  try {
+    lowerUrl = decodeURIComponent(lowerUrl);
+  } catch {
+    // Best-effort decode
+  }
+
   const FORBIDDEN_HOST_PATTERNS = [
     'neon.tech',
     'ep-empty-salad-b3cw8xsj',
@@ -157,7 +180,13 @@ export function validateTestDatabaseSafety(candidateUrl?: string): TestDbSafetyC
   }
 
   // 5. Ensure it does not resolve to the application DATABASE_URL or DIRECT_URL target
-  const prodUrls = [process.env.DATABASE_URL, process.env.DIRECT_URL].filter(Boolean) as string[];
+  const prodUrls = [
+    initialAmbientDatabaseUrl,
+    initialAmbientDirectUrl,
+    process.env.DATABASE_URL,
+    process.env.DIRECT_URL,
+  ].filter(Boolean) as string[];
+
   for (const prodUrl of prodUrls) {
     if (isSameDatabaseTarget(rawTestUrl, prodUrl)) {
       return {
@@ -193,13 +222,10 @@ if (safetyCheck.isSafe && safetyCheck.connectionString) {
   process.env.DIRECT_URL = safetyCheck.connectionString;
   setPrismaDatabaseUrl(safetyCheck.connectionString);
 } else {
-  // If unsafe or unconfigured, neutralize ambient DATABASE_URL if it points to Neon during test runs
+  // If unsafe or unconfigured in test runs, unconditionally neutralize ambient DATABASE_URL & DIRECT_URL
   if (process.env.NODE_ENV === 'test') {
-    const rawProd = process.env.DATABASE_URL || '';
-    if (rawProd.includes('neon.tech') || rawProd.includes('ep-empty-salad-b3cw8xsj')) {
-      process.env.DATABASE_URL = 'postgresql://test-safety-guard:disabled@127.0.0.1:5432/unconfigured_test_db';
-      delete process.env.DIRECT_URL;
-    }
+    process.env.DATABASE_URL = 'postgresql://test-safety-guard:disabled@127.0.0.1:5432/unconfigured_test_db';
+    delete process.env.DIRECT_URL;
     setPrismaDatabaseUrl(undefined);
   }
 

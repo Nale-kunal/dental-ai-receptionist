@@ -36,8 +36,19 @@ export function getPrisma(): PrismaClient {
       const activeTestUrl = _overrideDatabaseUrl || process.env.TEST_DATABASE_URL;
 
       if (activeTestUrl) {
-        const lower = activeTestUrl.toLowerCase();
-        if (lower.includes('neon.tech') || lower.includes('ep-empty-salad-b3cw8xsj')) {
+        let decoded = activeTestUrl.toLowerCase();
+        try {
+          decoded = decodeURIComponent(decoded);
+        } catch {
+          // Best-effort decode
+        }
+        if (
+          decoded.includes('neon.tech') ||
+          decoded.includes('ep-empty-salad-b3cw8xsj') ||
+          decoded.includes('/neondb') ||
+          decoded.includes('/production_clinic') ||
+          decoded.includes('/clinic_prod_db')
+        ) {
           throw new Error(
             'CRITICAL SECURITY ERROR: Refusing to initialize PrismaClient in test environment with a production Neon database URL.'
           );
