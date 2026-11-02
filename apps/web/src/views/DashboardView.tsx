@@ -448,7 +448,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* 4. Attention Center & Recent Activity */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1.9fr)', gap: '12px' }}>
+      <div className="dashboard-attention-grid">
         {/* Left: Enquiries Needing Staff Attention */}
         <div
           className="card"

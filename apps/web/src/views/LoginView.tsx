@@ -464,7 +464,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess, onExploreDemo }
           style={{
             marginTop: '20px',
             paddingTop: '16px',
-            borderTop: '1px solid var(--border-color)',
+            borderTop: '1px solid var(--border-subtle)',
             textAlign: 'center',
           }}
         >
@@ -477,7 +477,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess, onExploreDemo }
               marginBottom: '14px',
             }}
           >
-            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-color)' }} />
+            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-subtle)' }} />
             <span
               style={{
                 fontSize: '11px',
@@ -489,7 +489,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess, onExploreDemo }
             >
               Or Try Instantly
             </span>
-            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-color)' }} />
+            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-subtle)' }} />
           </div>
 
           <button
@@ -498,58 +498,72 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess, onExploreDemo }
             className="btn btn-secondary"
             style={{
               width: '100%',
-              padding: '12px 14px',
+              padding: '11px 14px',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'flex-start',
+              justifyContent: 'space-between',
               gap: '12px',
               textAlign: 'left',
-              borderRadius: 'var(--radius-md, 8px)',
-              border: '1px solid var(--border-color)',
-              backgroundColor: 'var(--bg-surface-elevated, var(--bg-surface))',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-card)',
+              backgroundColor: 'var(--bg-surface-secondary)',
               cursor: 'pointer',
-              transition: 'all var(--transition-fast, 150ms)',
+              transition: 'border-color var(--transition-fast), background-color var(--transition-fast)',
             }}
           >
-            <div
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '6px',
-                backgroundColor: 'rgba(13, 148, 136, 0.12)',
-                color: 'var(--accent-primary, #0d9488)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
-              <Sparkles size={16} />
-            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '11px', minWidth: 0 }}>
+              <div
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: 'var(--radius-xs)',
+                  backgroundColor: 'var(--accent-subtle)',
+                  color: 'var(--accent-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  border: '1px solid var(--accent-border)',
+                }}
+              >
+                <Sparkles size={16} />
+              </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  Explore Live Demo
-                </span>
+              <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Explore Live Demo
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '9.5px',
+                      fontWeight: 700,
+                      padding: '1.5px 5px',
+                      borderRadius: 'var(--radius-xs)',
+                      backgroundColor: 'var(--accent-subtle)',
+                      color: 'var(--accent-primary)',
+                      border: '1px solid var(--accent-border)',
+                      letterSpacing: '0.03em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    DEMO
+                  </span>
+                </div>
                 <span
                   style={{
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    padding: '2px 6px',
-                    borderRadius: '4px',
-                    backgroundColor: 'rgba(13, 148, 136, 0.15)',
-                    color: 'var(--accent-primary, #0d9488)',
-                    textTransform: 'uppercase',
+                    fontSize: '11.5px',
+                    color: 'var(--text-muted)',
+                    lineHeight: '1.3',
+                    marginTop: '2px',
                   }}
                 >
-                  Instant Access
+                  Full sample clinic data · No sign-up required
                 </span>
               </div>
-              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', lineHeight: '1.3' }}>
-                Explore a fully populated sample dental clinic. No account or password required.
-              </span>
             </div>
+
+            <ArrowRight size={14} color="var(--text-muted)" style={{ flexShrink: 0 }} />
           </button>
         </div>
       </div>

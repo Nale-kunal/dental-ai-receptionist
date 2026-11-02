@@ -20,6 +20,7 @@ import {
   Check,
   CalendarOff,
   Globe,
+  ArrowRight,
 } from 'lucide-react';
 
 interface ScheduleViewProps {
@@ -759,7 +760,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
           </button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: '12px' }}>
           {doctors.map((doc) => (
             <div
               key={doc.id}
@@ -771,40 +772,42 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '10px',
+                height: '100%',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                   <div
                     style={{
                       width: '36px',
                       height: '36px',
                       borderRadius: '50%',
                       backgroundColor: 'var(--accent-subtle)',
-                      border: '1px solid var(--accent-primary)',
+                      border: '1px solid var(--accent-border)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      color: 'var(--accent-text)',
+                      color: 'var(--accent-primary)',
                       fontWeight: 700,
                       fontSize: '13px',
+                      flexShrink: 0,
                     }}
                   >
                     {doc.displayName.slice(0, 2).toUpperCase()}
                   </div>
-                  <div>
-                    <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '14px' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {doc.displayName}
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '2px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--accent-text)', fontWeight: 600 }}>{doc.specialty || 'General Dentistry'}</span>
+                      <span style={{ fontSize: '11px', color: 'var(--accent-primary)', fontWeight: 600 }}>{doc.specialty || 'General Dentistry'}</span>
                       {doc.qualifications && (
-                        <span style={{ fontSize: '10px', color: '#a78bfa', backgroundColor: 'rgba(167, 139, 250, 0.12)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
+                        <span style={{ fontSize: '10px', color: 'var(--status-rescheduled-text)', backgroundColor: 'var(--status-rescheduled-bg)', border: '1px solid var(--status-rescheduled-border)', padding: '1px 5px', borderRadius: 'var(--radius-xs)', fontWeight: 600 }}>
                           {doc.qualifications}
                         </span>
                       )}
                       {(doc.experienceYears != null || doc.experience_years != null) && (
-                        <span style={{ fontSize: '10px', color: '#34d399', backgroundColor: 'rgba(52, 211, 153, 0.12)', padding: '1px 5px', borderRadius: '4px' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--status-confirmed-text)', backgroundColor: 'var(--status-confirmed-bg)', border: '1px solid var(--status-confirmed-border)', padding: '1px 5px', borderRadius: 'var(--radius-xs)' }}>
                           {doc.experienceYears ?? doc.experience_years} yrs exp
                         </span>
                       )}
@@ -812,26 +815,36 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
                   </div>
                 </div>
                 <span
+                  className="badge"
                   style={{
                     fontSize: '10.5px',
                     fontWeight: 600,
-                    color: doc.active ? '#10b981' : '#f87171',
-                    backgroundColor: doc.active ? 'var(--success-subtle)' : 'var(--danger-subtle)',
+                    color: doc.active ? 'var(--status-confirmed-text)' : 'var(--status-cancelled-text)',
+                    backgroundColor: doc.active ? 'var(--status-confirmed-bg)' : 'var(--status-cancelled-bg)',
+                    border: `1px solid ${doc.active ? 'var(--status-confirmed-border)' : 'var(--status-cancelled-border)'}`,
                     padding: '2px 7px',
-                    borderRadius: '4px',
+                    flexShrink: 0,
                   }}
                 >
+                  <span
+                    className="badge-dot"
+                    style={{
+                      backgroundColor: doc.active ? 'var(--status-confirmed-text)' : 'var(--status-cancelled-text)',
+                    }}
+                  />
                   {doc.active ? 'Accepting Patients' : 'Inactive'}
                 </span>
               </div>
 
-              {doc.bio && (
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+              {doc.bio ? (
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', minHeight: '34px' }}>
                   {doc.bio}
                 </div>
+              ) : (
+                <div style={{ minHeight: '34px' }} />
               )}
 
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>Default Buffer: <strong style={{ color: 'var(--text-primary)' }}>{doc.defaultBufferMinutes || 10}m</strong></span>
                 {(doc.licenseNumber || doc.license_number) && (
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
@@ -841,61 +854,50 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
               </div>
 
               {/* Action Buttons */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '4px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: 'auto', paddingTop: '4px' }}>
                 <button
+                  type="button"
                   onClick={() => handleOpenEditDoctor(doc)}
+                  className="btn btn-secondary btn-sm"
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                    height: '28px',
+                    minHeight: '28px',
+                    padding: '0 8px',
+                    fontSize: '11.5px',
                     gap: '5px',
-                    padding: '7px 10px',
-                    backgroundColor: 'var(--bg-surface-secondary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '6px',
-                    color: 'var(--text-primary)',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
                   }}
                 >
                   <Edit2 size={12} />
-                  Edit Details
+                  <span>Edit Details</span>
                 </button>
                 <button
+                  type="button"
                   onClick={() => handleOpenDoctorScheduleModal(doc)}
+                  className="btn btn-secondary btn-sm"
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                    height: '28px',
+                    minHeight: '28px',
+                    padding: '0 8px',
+                    fontSize: '11.5px',
                     gap: '5px',
-                    padding: '7px 10px',
-                    backgroundColor: 'var(--accent-subtle)',
-                    border: '1px solid var(--border-card)',
-                    borderRadius: '6px',
-                    color: 'var(--accent-text)',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
+                    color: 'var(--accent-primary)',
                   }}
                 >
                   <Clock size={12} />
-                  Schedule & Breaks
+                  <span>Schedule</span>
                 </button>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
                 <button
+                  type="button"
                   onClick={() => handleToggleDoctorStatus(doc)}
+                  className={doc.active ? 'btn btn-danger btn-sm' : 'btn btn-secondary btn-sm'}
                   style={{
-                    padding: '7px 10px',
-                    backgroundColor: doc.active ? 'var(--danger-subtle)' : 'var(--success-subtle)',
-                    border: `1px solid ${doc.active ? 'rgba(198, 40, 40, 0.2)' : 'rgba(16, 185, 129, 0.2)'}`,
-                    borderRadius: '6px',
-                    color: doc.active ? '#f87171' : '#10b981',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
+                    height: '28px',
+                    minHeight: '28px',
+                    padding: '0 10px',
+                    fontSize: '11.5px',
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -903,21 +905,21 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => onOpenBookingModal(doc.id)}
+                  className="btn btn-primary btn-sm"
                   style={{
                     flex: 1,
-                    padding: '7px 12px',
-                    backgroundColor: 'var(--bg-surface-secondary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '6px',
-                    color: 'var(--accent-text)',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    textAlign: 'center',
+                    height: '28px',
+                    minHeight: '28px',
+                    padding: '0 10px',
+                    fontSize: '11.5px',
+                    justifyContent: 'center',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  Book Slot →
+                  <span>Book Slot</span>
+                  <ArrowRight size={12} />
                 </button>
               </div>
             </div>
@@ -926,7 +928,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
       </div>
 
       {/* Grid: Operating Hours & Schedule Blocks */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+      <div className="schedule-dual-grid" style={{ display: 'grid', gap: '12px' }}>
         {/* Clinic Standard Operating Hours */}
         <div
           style={{
@@ -1621,7 +1623,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
                           </div>
                         </div>
 
-                        <div style={{ fontSize: '12px', color: 'var(--accent-text)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <Calendar size={12} />
                           {isSingleDay
                             ? formatDate(b.startsAt, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
@@ -2521,7 +2523,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
                 <h3 id="doctor-schedule-modal-title" style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
                   Practitioner Schedule & Availability
                 </h3>
-                <div style={{ fontSize: '13px', color: 'var(--accent-text)', marginTop: '3px' }}>
+                <div style={{ fontSize: '13px', color: 'var(--accent-primary)', marginTop: '3px', fontWeight: 500 }}>
                   {selectedDoctor.displayName} • {selectedDoctor.specialty}
                 </div>
               </div>

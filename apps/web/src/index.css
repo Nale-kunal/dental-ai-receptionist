@@ -589,3 +589,64 @@ select option {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ==========================================================================
+   Responsive Layout & Demo Indicator Helpers
+   ========================================================================== */
+
+.demo-banner-strip {
+  height: 32px;
+  min-height: 32px;
+  background-color: var(--bg-surface-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  z-index: 45;
+  user-select: none;
+}
+
+@media (max-width: 768px) {
+  .demo-banner-hint {
+    display: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .demo-banner-strip {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+  .demo-banner-btn-text {
+    display: none !important;
+  }
+}
+
+.dashboard-attention-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.9fr);
+  gap: 12px;
+}
+
+@media (max-width: 1024px) {
+  .dashboard-attention-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.schedule-dual-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 960px) {
+  .schedule-dual-grid {
+    grid-template-columns: 1fr;
+  }
+}
