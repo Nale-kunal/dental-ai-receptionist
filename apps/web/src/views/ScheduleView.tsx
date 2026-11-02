@@ -45,6 +45,18 @@ const WEEK_DAYS: { dayOfWeek: number; name: string }[] = [
   { dayOfWeek: 0, name: 'Sunday' },
 ];
 
+const getDoctorInitials = (doc: any) => {
+  if (doc?.firstName && doc?.lastName) {
+    return `${doc.firstName[0]}${doc.lastName[0]}`.toUpperCase();
+  }
+  const clean = (doc?.displayName || doc?.name || '').replace(/^Dr\.\s*/i, '').trim();
+  const parts = clean.split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase() || 'DR';
+};
+
 export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }) => {
   const toast = useToast();
   const { formatDate, formatTime, toUtcIso } = useClinic();
@@ -771,156 +783,249 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onOpenBookingModal }
                 padding: '14px 16px',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '10px',
+                gap: '12px',
                 height: '100%',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                  <div
-                    style={{
-                      width: '36px',
-                      height: '36px',
-                      borderRadius: '50%',
-                      backgroundColor: 'var(--accent-subtle)',
-                      border: '1px solid var(--accent-border)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'var(--accent-primary)',
-                      fontWeight: 700,
-                      fontSize: '13px',
-                      flexShrink: 0,
-                    }}
-                  >
-                    {doc.displayName.slice(0, 2).toUpperCase()}
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {doc.displayName}
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '2px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--accent-primary)', fontWeight: 600 }}>{doc.specialty || 'General Dentistry'}</span>
-                      {doc.qualifications && (
-                        <span style={{ fontSize: '10px', color: 'var(--status-rescheduled-text)', backgroundColor: 'var(--status-rescheduled-bg)', border: '1px solid var(--status-rescheduled-border)', padding: '1px 5px', borderRadius: 'var(--radius-xs)', fontWeight: 600 }}>
-                          {doc.qualifications}
-                        </span>
-                      )}
-                      {(doc.experienceYears != null || doc.experience_years != null) && (
-                        <span style={{ fontSize: '10px', color: 'var(--status-confirmed-text)', backgroundColor: 'var(--status-confirmed-bg)', border: '1px solid var(--status-confirmed-border)', padding: '1px 5px', borderRadius: 'var(--radius-xs)' }}>
-                          {doc.experienceYears ?? doc.experience_years} yrs exp
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <span
-                  className="badge"
+              {/* 1. Profile header & 2. Credentials/Experience */}
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                {/* Dentist avatar */}
+                <div
                   style={{
-                    fontSize: '10.5px',
-                    fontWeight: 600,
-                    color: doc.active ? 'var(--status-confirmed-text)' : 'var(--status-cancelled-text)',
-                    backgroundColor: doc.active ? 'var(--status-confirmed-bg)' : 'var(--status-cancelled-bg)',
-                    border: `1px solid ${doc.active ? 'var(--status-confirmed-border)' : 'var(--status-cancelled-border)'}`,
-                    padding: '2px 7px',
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '50%',
+                    backgroundColor: 'var(--accent-subtle)',
+                    border: '1px solid var(--accent-border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--accent-primary)',
+                    fontWeight: 700,
+                    fontSize: '13px',
                     flexShrink: 0,
                   }}
                 >
-                  <span
-                    className="badge-dot"
-                    style={{
-                      backgroundColor: doc.active ? 'var(--status-confirmed-text)' : 'var(--status-cancelled-text)',
-                    }}
-                  />
-                  {doc.active ? 'Accepting Patients' : 'Inactive'}
-                </span>
-              </div>
-
-              {doc.bio ? (
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', minHeight: '34px' }}>
-                  {doc.bio}
+                  {getDoctorInitials(doc)}
                 </div>
-              ) : (
-                <div style={{ minHeight: '34px' }} />
-              )}
 
-              <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Default Buffer: <strong style={{ color: 'var(--text-primary)' }}>{doc.defaultBufferMinutes || 10}m</strong></span>
-                {(doc.licenseNumber || doc.license_number) && (
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    Lic: {doc.licenseNumber || doc.license_number}
+                {/* Profile content column */}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {/* Name, Specialty & Status Badge */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 0, flex: '1 1 120px' }}>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          color: 'var(--text-primary)',
+                          fontSize: '14px',
+                          lineHeight: 1.3,
+                          overflowWrap: 'break-word',
+                          wordBreak: 'break-word',
+                        }}
+                      >
+                        {doc.displayName}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '11.5px',
+                          color: 'var(--accent-primary)',
+                          fontWeight: 600,
+                          marginTop: '2px',
+                          lineHeight: 1.35,
+                          overflowWrap: 'break-word',
+                          wordBreak: 'break-word',
+                        }}
+                      >
+                        {doc.specialty || 'General Dentistry'}
+                      </div>
+                    </div>
+
+                    <span
+                      className="badge"
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        color: doc.active ? 'var(--status-confirmed-text)' : 'var(--status-cancelled-text)',
+                        backgroundColor: doc.active ? 'var(--status-confirmed-bg)' : 'var(--status-cancelled-bg)',
+                        border: `1px solid ${doc.active ? 'var(--status-confirmed-border)' : 'var(--status-cancelled-border)'}`,
+                        padding: '2px 7px',
+                        flexShrink: 0,
+                        whiteSpace: 'nowrap',
+                        alignSelf: 'flex-start',
+                      }}
+                    >
+                      <span
+                        className="badge-dot"
+                        style={{
+                          backgroundColor: doc.active ? 'var(--status-confirmed-text)' : 'var(--status-cancelled-text)',
+                        }}
+                      />
+                      {doc.active ? 'Accepting Patients' : 'Inactive'}
+                    </span>
+                  </div>
+
+                  {/* Credentials and experience directly below name/specialty */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '2px' }}>
+                    {doc.qualifications && (
+                      <div
+                        style={{
+                          fontSize: '10.5px',
+                          color: 'var(--status-rescheduled-text)',
+                          backgroundColor: 'var(--status-rescheduled-bg)',
+                          border: '1px solid var(--status-rescheduled-border)',
+                          padding: '2px 6px',
+                          borderRadius: 'var(--radius-xs)',
+                          fontWeight: 500,
+                          lineHeight: 1.35,
+                          maxWidth: '100%',
+                          overflowWrap: 'break-word',
+                          wordBreak: 'break-word',
+                        }}
+                      >
+                        {doc.qualifications}
+                      </div>
+                    )}
+                    {(doc.experienceYears != null || doc.experience_years != null) && (
+                      <div style={{ display: 'flex' }}>
+                        <span
+                          style={{
+                            fontSize: '10px',
+                            color: 'var(--status-confirmed-text)',
+                            backgroundColor: 'var(--status-confirmed-bg)',
+                            border: '1px solid var(--status-confirmed-border)',
+                            padding: '1.5px 6px',
+                            borderRadius: 'var(--radius-xs)',
+                            fontWeight: 500,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {doc.experienceYears ?? doc.experience_years} yrs exp
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Description and operational details */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div
+                  style={{
+                    fontSize: '12px',
+                    color: 'var(--text-secondary)',
+                    lineHeight: 1.45,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    minHeight: '35px',
+                  }}
+                >
+                  {doc.bio || 'Comprehensive dental care, preventive diagnostics, cleanings, and patient consultations.'}
+                </div>
+
+                <div
+                  style={{
+                    fontSize: '11.5px',
+                    color: 'var(--text-muted)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '6px',
+                  }}
+                >
+                  <span style={{ whiteSpace: 'nowrap' }}>
+                    Default Buffer: <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{doc.defaultBufferMinutes || 10}m</strong>
                   </span>
-                )}
+                  {(doc.licenseNumber || doc.license_number) && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      Lic: {doc.licenseNumber || doc.license_number}
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {/* Action Buttons */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: 'auto', paddingTop: '4px' }}>
-                <button
-                  type="button"
-                  onClick={() => handleOpenEditDoctor(doc)}
-                  className="btn btn-secondary btn-sm"
-                  style={{
-                    height: '28px',
-                    minHeight: '28px',
-                    padding: '0 8px',
-                    fontSize: '11.5px',
-                    gap: '5px',
-                  }}
-                >
-                  <Edit2 size={12} />
-                  <span>Edit Details</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenDoctorScheduleModal(doc)}
-                  className="btn btn-secondary btn-sm"
-                  style={{
-                    height: '28px',
-                    minHeight: '28px',
-                    padding: '0 8px',
-                    fontSize: '11.5px',
-                    gap: '5px',
-                    color: 'var(--accent-primary)',
-                  }}
-                >
-                  <Clock size={12} />
-                  <span>Schedule</span>
-                </button>
-              </div>
+              {/* 4. Action buttons */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 'auto', paddingTop: '4px' }}>
+                {/* Row 1: Edit Details & Schedule */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditDoctor(doc)}
+                    className="btn btn-secondary btn-sm"
+                    style={{
+                      height: '28px',
+                      minHeight: '28px',
+                      padding: '0 8px',
+                      fontSize: '11.5px',
+                      gap: '5px',
+                      width: '100%',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Edit2 size={12} />
+                    <span>Edit Details</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDoctorScheduleModal(doc)}
+                    className="btn btn-secondary btn-sm"
+                    style={{
+                      height: '28px',
+                      minHeight: '28px',
+                      padding: '0 8px',
+                      fontSize: '11.5px',
+                      gap: '5px',
+                      color: 'var(--accent-primary)',
+                      width: '100%',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Clock size={12} />
+                    <span>Schedule</span>
+                  </button>
+                </div>
 
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  type="button"
-                  onClick={() => handleToggleDoctorStatus(doc)}
-                  className={doc.active ? 'btn btn-danger btn-sm' : 'btn btn-secondary btn-sm'}
-                  style={{
-                    height: '28px',
-                    minHeight: '28px',
-                    padding: '0 10px',
-                    fontSize: '11.5px',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {doc.active ? 'Deactivate' : 'Activate'}
-                </button>
+                {/* Row 2: Activate/Deactivate & Book Slot */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleDoctorStatus(doc)}
+                    className={doc.active ? 'btn btn-danger btn-sm' : 'btn btn-secondary btn-sm'}
+                    style={{
+                      height: '28px',
+                      minHeight: '28px',
+                      padding: '0 10px',
+                      fontSize: '11.5px',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {doc.active ? 'Deactivate' : 'Activate'}
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => onOpenBookingModal(doc.id)}
-                  className="btn btn-primary btn-sm"
-                  style={{
-                    flex: 1,
-                    height: '28px',
-                    minHeight: '28px',
-                    padding: '0 10px',
-                    fontSize: '11.5px',
-                    justifyContent: 'center',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span>Book Slot</span>
-                  <ArrowRight size={12} />
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenBookingModal(doc.id)}
+                    className="btn btn-primary btn-sm"
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      height: '28px',
+                      minHeight: '28px',
+                      padding: '0 10px',
+                      fontSize: '11.5px',
+                      justifyContent: 'center',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <span>Book Slot</span>
+                    <ArrowRight size={12} />
+                  </button>
+                </div>
               </div>
             </div>
           ))}
