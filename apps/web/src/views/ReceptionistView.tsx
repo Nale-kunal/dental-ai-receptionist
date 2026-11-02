@@ -158,6 +158,10 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
 
     const setupSSE = async () => {
       if (isDisposed) return;
+      if (api.isDemoMode()) {
+        setRealtimeConnected(true);
+        return;
+      }
       try {
         const ticket = await api.getStreamTicket();
         if (isDisposed) return;
@@ -336,6 +340,7 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
     // Tab visibility recovery handler: catch up on any missed messages
     const handleVisibilityChange = async () => {
       if (document.visibilityState === 'visible' && !isDisposed) {
+        if (api.isDemoMode()) return;
         try {
           const currentSelected = selectedConversationIdRef.current;
           const syncRes = await api.syncConversations(lastSyncTimestampRef.current, currentSelected || undefined);

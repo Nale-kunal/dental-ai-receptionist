@@ -15,13 +15,15 @@ import {
   AlertCircle,
   Sun,
   Moon,
+  Sparkles,
 } from 'lucide-react';
 
 interface LoginViewProps {
   onSuccess: () => void;
+  onExploreDemo?: () => void;
 }
 
-export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
+export const LoginView: React.FC<LoginViewProps> = ({ onSuccess, onExploreDemo }) => {
   const toast = useToast();
   const { theme, toggleTheme } = useTheme();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
@@ -456,6 +458,100 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
             </button>
           </form>
         )}
+
+        {/* Explore Live Demo Entry Point */}
+        <div
+          style={{
+            marginTop: '20px',
+            paddingTop: '16px',
+            borderTop: '1px solid var(--border-color)',
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '10px',
+              marginBottom: '14px',
+            }}
+          >
+            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-color)' }} />
+            <span
+              style={{
+                fontSize: '11px',
+                fontWeight: 600,
+                color: 'var(--text-muted)',
+                letterSpacing: '0.05em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Or Try Instantly
+            </span>
+            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-color)' }} />
+          </div>
+
+          <button
+            type="button"
+            onClick={onExploreDemo}
+            className="btn btn-secondary"
+            style={{
+              width: '100%',
+              padding: '12px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-start',
+              gap: '12px',
+              textAlign: 'left',
+              borderRadius: 'var(--radius-md, 8px)',
+              border: '1px solid var(--border-color)',
+              backgroundColor: 'var(--bg-surface-elevated, var(--bg-surface))',
+              cursor: 'pointer',
+              transition: 'all var(--transition-fast, 150ms)',
+            }}
+          >
+            <div
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                backgroundColor: 'rgba(13, 148, 136, 0.12)',
+                color: 'var(--accent-primary, #0d9488)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Sparkles size={16} />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  Explore Live Demo
+                </span>
+                <span
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    backgroundColor: 'rgba(13, 148, 136, 0.15)',
+                    color: 'var(--accent-primary, #0d9488)',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Instant Access
+                </span>
+              </div>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', lineHeight: '1.3' }}>
+                Explore a fully populated sample dental clinic. No account or password required.
+              </span>
+            </div>
+          </button>
+        </div>
       </div>
     </div>
   );

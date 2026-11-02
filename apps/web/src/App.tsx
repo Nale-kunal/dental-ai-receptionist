@@ -23,9 +23,14 @@ import { HandoffModal } from './components/modals/HandoffModal';
 import { api } from './api/client';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoginView } from './views/LoginView';
+import { DemoBanner } from './components/DemoBanner';
+import { demoStore } from './demo/demoStore';
 
 interface DashboardContentProps {
   onLogout?: () => void;
+  isDemoMode?: boolean;
+  onResetDemo?: () => void;
+  onExitDemo?: () => void;
 }
 
 const VALID_TABS: NavTab[] = ['dashboard', 'appointments', 'patients', 'receptionist', 'schedules', 'services', 'analytics', 'audit', 'settings'];
@@ -55,7 +60,12 @@ function getInitialSubTab(): 'chats' | 'settings' | 'integration' {
   return 'chats';
 }
 
-const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
+const DashboardContent: React.FC<DashboardContentProps> = ({
+  onLogout,
+  isDemoMode,
+  onResetDemo,
+  onExitDemo,
+}) => {
   const toast = useToast();
   const [activeTab, setActiveTabState] = useState<NavTab>(getInitialTab);
   const [receptionistSubTab, setReceptionistSubTab] = useState<'chats' | 'settings' | 'integration'>(getInitialSubTab);
@@ -242,6 +252,9 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
 
       {/* Main Content Area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', minHeight: 0, overflow: 'hidden' }}>
+        {isDemoMode && onResetDemo && onExitDemo && (
+          <DemoBanner onReset={onResetDemo} onExit={onExitDemo} />
+        )}
         <Header
           title={meta.title}
           subtitle={meta.subtitle}
@@ -359,12 +372,72 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ onLogout }) => {
 
 export const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.location.pathname.startsWith('/demo');
+    }
+    return false;
+  });
 
   useEffect(() => {
-    api.ensureAuthenticated().then((authenticated) => {
-      setIsAuthenticated(authenticated);
-    });
+    const isInitialDemo = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
+    if (isInitialDemo) {
+      api.setDemoMode(true);
+      setIsDemoMode(true);
+      setIsAuthenticated(true);
+    } else {
+      api.ensureAuthenticated().then((authenticated) => {
+        setIsAuthenticated(authenticated);
+      });
+    }
+
+    const handleLocationChange = () => {
+      const isDemo = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
+      if (isDemo !== api.isDemoMode()) {
+        api.setDemoMode(isDemo);
+        setIsDemoMode(isDemo);
+        if (isDemo) {
+          setIsAuthenticated(true);
+        } else {
+          api.ensureAuthenticated().then((authenticated) => {
+            setIsAuthenticated(authenticated);
+          });
+        }
+      }
+    };
+
+    window.addEventListener('popstate', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+    };
   }, []);
+
+  const handleEnterDemo = () => {
+    api.setDemoMode(true);
+    try {
+      window.history.pushState({}, '', '/demo' + (window.location.search || ''));
+    } catch {
+      // browser history guard
+    }
+    setIsDemoMode(true);
+    setIsAuthenticated(true);
+  };
+
+  const handleExitDemo = () => {
+    api.setDemoMode(false);
+    try {
+      window.history.pushState({}, '', '/');
+    } catch {
+      // browser history guard
+    }
+    setIsDemoMode(false);
+    setIsAuthenticated(api.getUser() !== null && !!api.getToken());
+  };
+
+  const handleResetDemo = () => {
+    demoStore.reset();
+    window.dispatchEvent(new CustomEvent('clinic:refresh_dashboard'));
+  };
 
   if (isAuthenticated === null) {
     return (
@@ -402,11 +475,25 @@ export const App: React.FC = () => {
     <ThemeProvider>
       <ToastProvider>
         {!isAuthenticated ? (
-          <LoginView onSuccess={() => setIsAuthenticated(true)} />
+          <LoginView
+            onSuccess={() => setIsAuthenticated(true)}
+            onExploreDemo={handleEnterDemo}
+          />
         ) : (
           <ClinicProvider>
             <ErrorBoundary name="Clinic Operations Dashboard">
-              <DashboardContent onLogout={() => setIsAuthenticated(false)} />
+              <DashboardContent
+                onLogout={() => {
+                  if (isDemoMode) {
+                    handleExitDemo();
+                  } else {
+                    setIsAuthenticated(false);
+                  }
+                }}
+                isDemoMode={isDemoMode}
+                onResetDemo={handleResetDemo}
+                onExitDemo={handleExitDemo}
+              />
             </ErrorBoundary>
           </ClinicProvider>
         )}
