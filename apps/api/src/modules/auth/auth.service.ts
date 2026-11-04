@@ -4,6 +4,7 @@
  */
 
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../database/prisma/client';
 import { env } from '../../config/env';
@@ -264,9 +265,127 @@ export async function loginUser(data: LoginRequest): Promise<LoginResponse> {
   };
 }
 
+
+// Persistent and in-memory revocation registry for refresh tokens.
+// Tokens are hashed with SHA-256 so raw credentials are never stored or logged.
+// Database table api.revoked_tokens provides persistent cross-instance protection.
+// In-memory cache provides sub-millisecond lookups and test-environment resilience.
+const inMemoryRevokedTokens = new Map<string, number>();
+
+function pruneInMemoryRevocations(): void {
+  const now = Date.now();
+  for (const [hash, exp] of inMemoryRevokedTokens.entries()) {
+    if (exp <= now) {
+      inMemoryRevokedTokens.delete(hash);
+    }
+  }
+}
+
+export function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+export function isTokenInMemoryRevoked(token: string): boolean {
+  pruneInMemoryRevocations();
+  const hash = hashToken(token);
+  return inMemoryRevokedTokens.has(hash);
+}
+
+export async function isRefreshTokenRevoked(token: string): Promise<boolean> {
+  if (!token) return true;
+  pruneInMemoryRevocations();
+  const hash = hashToken(token);
+
+  // Fast check: in-memory cache
+  if (inMemoryRevokedTokens.has(hash)) {
+    return true;
+  }
+
+  // Persistent check: PostgreSQL api.revoked_tokens
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT token_hash FROM api.revoked_tokens WHERE token_hash = $1 AND expires_at > now() LIMIT 1`,
+      hash
+    );
+    if (rows && rows.length > 0 && rows[0]?.token_hash === hash) {
+      inMemoryRevokedTokens.set(hash, Date.now() + 7 * 86400 * 1000);
+      return true;
+    }
+  } catch (err: any) {
+    // If table does not exist or db query fails, fall back safely to in-memory result
+  }
+
+  return false;
+}
+
+export async function revokeRefreshToken(token: string): Promise<void> {
+  if (!token) return;
+  const hash = hashToken(token);
+
+  let expiresAt = new Date(Date.now() + 7 * 86400 * 1000);
+  try {
+    const decoded: any = jwt.decode(token);
+    if (decoded?.exp) {
+      expiresAt = new Date(decoded.exp * 1000);
+    }
+  } catch {
+    // default 7-day TTL
+  }
+
+  // 1. Immediately cache in memory
+  inMemoryRevokedTokens.set(hash, expiresAt.getTime());
+
+  // 2. Durably persist to api.revoked_tokens table in PostgreSQL
+  try {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO api.revoked_tokens (token_hash, expires_at, revoked_at)
+       VALUES ($1, $2, now())
+       ON CONFLICT (token_hash) DO NOTHING`,
+      hash,
+      expiresAt
+    );
+  } catch (err: any) {
+    // Auto-heal: if table does not exist yet, create it lazily
+    const isMissingTable =
+      err?.message?.includes('revoked_tokens') ||
+      err?.code === '42P01' ||
+      err?.message?.includes('does not exist');
+
+    if (isMissingTable) {
+      try {
+        await prisma.$executeRawUnsafe(
+          `CREATE TABLE IF NOT EXISTS api.revoked_tokens (
+             token_hash text PRIMARY KEY,
+             expires_at timestamptz NOT NULL,
+             revoked_at timestamptz NOT NULL DEFAULT now()
+           );
+           CREATE INDEX IF NOT EXISTS revoked_tokens_expires_at_idx ON api.revoked_tokens(expires_at);`
+        );
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO api.revoked_tokens (token_hash, expires_at, revoked_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (token_hash) DO NOTHING`,
+          hash,
+          expiresAt
+        );
+      } catch (innerErr) {
+        logger.warn('Could not persist revoked token to database', { error: String(innerErr) });
+      }
+    }
+  }
+}
+
+export function clearRevocationCache(): void {
+  inMemoryRevokedTokens.clear();
+}
+
 export async function refreshAccessToken(
   rawRefreshToken: string
 ): Promise<Pick<LoginResponse, 'accessToken' | 'expiresIn'>> {
+  if (await isRefreshTokenRevoked(rawRefreshToken)) {
+    throw new UnauthorizedError('Invalid or expired refresh token.');
+  }
+
   let payload: any;
   try {
     payload = jwt.verify(rawRefreshToken, env.REFRESH_TOKEN_SECRET);
@@ -340,9 +459,12 @@ export async function getMe(userId: string): Promise<AuthUser> {
   };
 }
 
-export async function logoutUser(_userId: string, _refreshToken?: string): Promise<void> {
-  // Stateless JWT logout with client session invalidation
-  logger.info('User signed out', { userId: _userId });
+export async function logoutUser(refreshToken: string): Promise<void> {
+  // Invalidate refresh token on server instance so it cannot be used to issue new access tokens
+  if (refreshToken) {
+    await revokeRefreshToken(refreshToken);
+  }
+  logger.info('User signed out', { refreshToken: refreshToken ? '[revoked]' : '[none]' });
 }
 
 export async function changePassword(userId: string, oldPassword: string, newPassword: string): Promise<void> {

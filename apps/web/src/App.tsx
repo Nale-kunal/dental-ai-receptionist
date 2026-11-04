@@ -66,6 +66,12 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
   onResetDemo,
   onExitDemo,
 }) => {
+  // Immediate fail-closed guard: if non-demo and credentials missing from storage, conceal dashboard immediately
+  const hasValidStorage = typeof window === 'undefined' || !!localStorage.getItem('dental_token');
+  if (!isDemoMode && (!api.getToken() || !api.getUser() || !hasValidStorage)) {
+    return null;
+  }
+
   const toast = useToast();
   const [activeTab, setActiveTabState] = useState<NavTab>(getInitialTab);
   const [receptionistSubTab, setReceptionistSubTab] = useState<'chats' | 'settings' | 'integration'>(getInitialSubTab);
@@ -379,6 +385,12 @@ export const App: React.FC = () => {
     return false;
   });
 
+  // Effective authentication state: fails closed immediately if credentials are missing
+  const hasValidStoredCredentials = isDemoMode
+    ? true
+    : (!!api.getToken() && !!api.getUser() && (typeof window === 'undefined' || !!localStorage.getItem('dental_token')));
+  const effectiveAuthenticated = isAuthenticated === true && hasValidStoredCredentials;
+
   useEffect(() => {
     const isInitialDemo = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
     if (isInitialDemo) {
@@ -391,6 +403,27 @@ export const App: React.FC = () => {
       });
     }
 
+    // BFCache & page restoration guard: re-validate auth whenever page is shown
+    const handlePageShow = (event: PageTransitionEvent) => {
+      const isDemo = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
+      if (isDemo) return;
+
+      // Fail-closed session check: if tokens or user are missing, transition to unauthenticated
+      const hasValidSession = !!api.getToken() && !!api.getUser();
+      if (!hasValidSession) {
+        setIsAuthenticated(false);
+      } else if (event.persisted) {
+        // When restored from BFCache with tokens, verify validity against token expiry
+        api.ensureAuthenticated().then((authenticated) => {
+          if (!authenticated) {
+            setIsAuthenticated(false);
+          }
+        });
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
+
+    // History navigation listener: Back and Forward buttons
     const handleLocationChange = () => {
       const isDemo = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
       if (isDemo !== api.isDemoMode()) {
@@ -403,12 +436,39 @@ export const App: React.FC = () => {
             setIsAuthenticated(authenticated);
           });
         }
+      } else if (!isDemo) {
+        // Enforce fail-closed check on history navigation:
+        const hasValidSession = !!api.getToken() && !!api.getUser();
+        if (!hasValidSession) {
+          setIsAuthenticated(false);
+        }
       }
     };
+
+    // Cross-tab logout listener: invalidate when tokens are removed in another tab
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'dental_token' && !e.newValue) {
+        api.clearSession();
+        setIsAuthenticated(false);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // Intra-app auth change listener: triggered whenever clearSession() is executed (e.g. on 401s)
+    const handleAuthChange = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.authenticated === false) {
+        setIsAuthenticated(false);
+      }
+    };
+    window.addEventListener('dental:auth_change', handleAuthChange);
 
     window.addEventListener('popstate', handleLocationChange);
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('dental:auth_change', handleAuthChange);
     };
   }, []);
 
@@ -474,7 +534,7 @@ export const App: React.FC = () => {
   return (
     <ThemeProvider>
       <ToastProvider>
-        {!isAuthenticated ? (
+        {!effectiveAuthenticated ? (
           <LoginView
             onSuccess={() => setIsAuthenticated(true)}
             onExploreDemo={handleEnterDemo}
@@ -487,7 +547,21 @@ export const App: React.FC = () => {
                   if (isDemoMode) {
                     handleExitDemo();
                   } else {
+                    // 1. Synchronously clear session credentials from memory and storage immediately
+                    api.clearSession();
+                    // 2. Dispatch non-blocking server revocation request
+                    api.logout().catch(() => {});
+                    // 3. Clear session-specific localStorage keys
+                    try {
+                      localStorage.removeItem('dental_active_tab');
+                      localStorage.removeItem('dental_active_conversation_id');
+                    } catch {/* storage guard */}
+                    // 4. Transition to unauthenticated state immediately
                     setIsAuthenticated(false);
+                    // 5. Replace current history entry so Back doesn't restore this URL as authenticated
+                    try {
+                      window.history.replaceState({ loggedOut: true }, '', '/');
+                    } catch {/* history guard */}
                   }
                 }}
                 isDemoMode={isDemoMode}

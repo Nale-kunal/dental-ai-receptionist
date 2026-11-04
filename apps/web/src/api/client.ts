@@ -89,6 +89,7 @@ class ApiClient {
   private user: AuthUser | null = null;
   private authPromise: Promise<boolean> | null = null;
   private demoMode: boolean = false;
+  private logoutGeneration: number = 0;
 
   constructor() {
     this.token = localStorage.getItem('dental_token');
@@ -111,6 +112,14 @@ class ApiClient {
 
   public setDemoMode(enabled: boolean): void {
     this.demoMode = enabled;
+  }
+
+  public bumpLogoutGeneration(): void {
+    this.logoutGeneration++;
+  }
+
+  public getLogoutGeneration(): number {
+    return this.logoutGeneration;
   }
 
   public getToken(): string | null {
@@ -140,9 +149,14 @@ class ApiClient {
     this.token = null;
     this.refreshToken = null;
     this.user = null;
-    localStorage.removeItem('dental_token');
-    localStorage.removeItem('dental_refresh_token');
-    localStorage.removeItem('dental_user');
+    try {
+      localStorage.removeItem('dental_token');
+      localStorage.removeItem('dental_refresh_token');
+      localStorage.removeItem('dental_user');
+    } catch { /* storage guard */ }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('dental:auth_change', { detail: { authenticated: false } }));
+    }
   }
 
   public async ensureAuthenticated(): Promise<boolean> {
@@ -161,6 +175,9 @@ class ApiClient {
       return this.authPromise;
     }
 
+    // Capture generation counter at call time to detect intervening logout
+    const capturedGeneration = this.logoutGeneration;
+
     this.authPromise = (async () => {
       try {
         // 1. Try refresh token if available
@@ -172,6 +189,12 @@ class ApiClient {
               body: JSON.stringify({ refreshToken: this.refreshToken }),
             });
             const refreshJson: any = await refreshRes.json();
+
+            // Check if logout happened while we were waiting
+            if (this.logoutGeneration !== capturedGeneration) {
+              return false;
+            }
+
             if (refreshRes.ok && refreshJson.ok && refreshJson.data?.accessToken) {
               this.token = refreshJson.data.accessToken;
               localStorage.setItem('dental_token', this.token!);
@@ -182,13 +205,20 @@ class ApiClient {
           }
         }
 
+        // Check generation again before clearing
+        if (this.logoutGeneration !== capturedGeneration) {
+          return false;
+        }
+
         // Clean tenant isolation: Never automatically fall back to demo clinic credentials.
         // If unauthenticated or token expired, return false so the user is directed to LoginView.
         this.clearSession();
         return false;
       } catch (e) {
         console.warn('Session verification notice:', e);
-        this.clearSession();
+        if (this.logoutGeneration === capturedGeneration) {
+          this.clearSession();
+        }
         return false;
       } finally {
         this.authPromise = null;
@@ -295,23 +325,31 @@ class ApiClient {
     return res;
   }
 
-  public async logout() {
+  public async logout(): Promise<void> {
     if (this.demoMode) {
       this.setDemoMode(false);
       return;
     }
-    try {
-      if (this.refreshToken) {
-        await fetch(`${API_BASE}/auth/logout`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken: this.refreshToken }),
-        });
-      }
-    } catch {
-      // Ignore network errors on logout
-    } finally {
-      this.clearSession();
+
+    // 1. Bump generation to invalidate any in-flight ensureAuthenticated() calls
+    this.logoutGeneration++;
+
+    // 2. Cancel any in-flight auth deduplication promise
+    this.authPromise = null;
+
+    // 3. Clear session synchronously (before any await)
+    const refreshTokenSnapshot = this.refreshToken;
+    this.clearSession();
+
+    // 4. Fire revocation request to backend in background (do not block logout on network)
+    if (refreshTokenSnapshot) {
+      fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: refreshTokenSnapshot }),
+      }).catch(() => {
+        // Network errors on logout are acceptable - client session is already cleared
+      });
     }
   }
 

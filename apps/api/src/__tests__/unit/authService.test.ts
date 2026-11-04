@@ -460,6 +460,7 @@ describe('Auth Service Unit Tests (Mocked Prisma & Zero DB)', () => {
         { expiresIn: '7d' }
       );
 
+      mockQueryRawUnsafe.mockResolvedValueOnce([]); // not revoked
       mockQueryRawUnsafe.mockResolvedValueOnce([
         {
           id: validUserId,
@@ -495,6 +496,7 @@ describe('Auth Service Unit Tests (Mocked Prisma & Zero DB)', () => {
         { expiresIn: '7d' }
       );
 
+      mockQueryRawUnsafe.mockResolvedValueOnce([]); // not revoked
       mockQueryRawUnsafe.mockResolvedValueOnce([
         {
           id: validUserId,
@@ -518,6 +520,7 @@ describe('Auth Service Unit Tests (Mocked Prisma & Zero DB)', () => {
       );
 
       // Case 1: suspended_at is set
+      mockQueryRawUnsafe.mockResolvedValueOnce([]); // not revoked
       mockQueryRawUnsafe.mockResolvedValueOnce([
         {
           id: validUserId,
@@ -533,6 +536,7 @@ describe('Auth Service Unit Tests (Mocked Prisma & Zero DB)', () => {
       );
 
       // Case 2: clinic_active is false
+      mockQueryRawUnsafe.mockResolvedValueOnce([]); // not revoked
       mockQueryRawUnsafe.mockResolvedValueOnce([
         {
           id: validUserId,

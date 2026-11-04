@@ -108,6 +108,14 @@ export function createApp(): express.Application {
   // ─── API Routes ───────────────────────────────────────────────────────────────
   const API = '/api/v1';
 
+  // Prevent browser caching of sensitive API responses (HIPAA/Security)
+  app.use(API, (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+  });
+
   app.use(`${API}/auth`, authRouter);
   app.use(`${API}/appointments`, appointmentsRouter);
   app.use(`${API}/patients`, patientsRouter);

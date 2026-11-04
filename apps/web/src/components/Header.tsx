@@ -36,8 +36,9 @@ export const Header: React.FC<HeaderProps> = ({
     : 'Clinic Administrator';
   const displayEmail = user?.email || '';
 
-  const handleLogout = async () => {
-    await api.logout();
+  const handleLogout = () => {
+    // Initiate background token revocation and synchronous session teardown
+    api.logout().catch(() => {});
     if (onLogout) {
       onLogout();
     } else {
