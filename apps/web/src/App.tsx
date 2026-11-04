@@ -66,9 +66,10 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
   onResetDemo,
   onExitDemo,
 }) => {
-  // Immediate fail-closed guard: if non-demo and credentials missing from storage, conceal dashboard immediately
+  // Immediate fail-closed guard: if non-demo or demo session invalid, conceal dashboard immediately
+  const isDemoActive = isDemoMode && typeof window !== 'undefined' && sessionStorage.getItem('dental_demo_active') === 'true';
   const hasValidStorage = typeof window === 'undefined' || !!localStorage.getItem('dental_token');
-  if (!isDemoMode && (!api.getToken() || !api.getUser() || !hasValidStorage)) {
+  if (!isDemoActive && (!api.getToken() || !api.getUser() || !hasValidStorage)) {
     return null;
   }
 
@@ -378,48 +379,82 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
 
 export type AuthState = 'initializing' | 'authenticated' | 'unauthenticated' | 'logging_out';
 
+const isDemoSessionActive = () => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return sessionStorage.getItem('dental_demo_active') === 'true';
+  } catch {
+    return false;
+  }
+};
+
 export const App: React.FC = () => {
   const [authState, setAuthState] = useState<AuthState>('initializing');
   const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      return window.location.pathname.startsWith('/demo');
+      return isDemoSessionActive() && window.location.pathname.startsWith('/demo');
     }
     return false;
   });
 
   // Effective authentication state: fails closed immediately if credentials are missing
-  const effectiveAuthenticated = isDemoMode
+  const effectiveAuthenticated = (isDemoMode && isDemoSessionActive())
     ? authState === 'authenticated'
     : (authState === 'authenticated' && api.hasActiveSession());
 
   useEffect(() => {
-    const isInitialDemo = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
+    const isInitialDemo = isDemoSessionActive() && typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
     if (isInitialDemo) {
       api.setDemoMode(true);
       setIsDemoMode(true);
       setAuthState('authenticated');
+      document.documentElement.classList.add('auth-authenticated');
+      document.documentElement.classList.remove('auth-unauthenticated');
     } else {
+      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/demo')) {
+        try {
+          window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
+        } catch {}
+      }
       api.initializeSession().then((isValid) => {
-        setAuthState(isValid ? 'authenticated' : 'unauthenticated');
+        if (isValid) {
+          setAuthState('authenticated');
+          document.documentElement.classList.add('auth-authenticated');
+          document.documentElement.classList.remove('auth-unauthenticated');
+        } else {
+          setAuthState('unauthenticated');
+          document.documentElement.classList.add('auth-unauthenticated');
+          document.documentElement.classList.remove('auth-authenticated');
+        }
       });
     }
 
     // BFCache & page restoration guard: re-validate auth whenever page is shown
     const handlePageShow = (event: PageTransitionEvent) => {
-      const isDemo = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
-      if (isDemo) return;
+      const isDemo = isDemoSessionActive() && typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
+      if (isDemo) {
+        document.documentElement.classList.add('auth-authenticated');
+        document.documentElement.classList.remove('auth-unauthenticated');
+        return;
+      }
 
       // Fail-closed session check: if session is invalid or page restored from BFCache, re-verify
       if (!api.hasActiveSession()) {
         api.clearSession();
+        setIsDemoMode(false);
         setAuthState('unauthenticated');
+        document.documentElement.classList.add('auth-unauthenticated');
+        document.documentElement.classList.remove('auth-authenticated');
         try {
           window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
         } catch {}
       } else if (event.persisted) {
         api.initializeSession().then((isValid) => {
           if (!isValid) {
+            setIsDemoMode(false);
             setAuthState('unauthenticated');
+            document.documentElement.classList.add('auth-unauthenticated');
+            document.documentElement.classList.remove('auth-authenticated');
             try {
               window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
             } catch {}
@@ -431,22 +466,41 @@ export const App: React.FC = () => {
 
     // History navigation listener: Back and Forward buttons
     const handleLocationChange = () => {
-      const isDemo = typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
-      if (isDemo !== api.isDemoMode()) {
-        api.setDemoMode(isDemo);
-        setIsDemoMode(isDemo);
-        if (isDemo) {
+      const demoActive = isDemoSessionActive() && typeof window !== 'undefined' && window.location.pathname.startsWith('/demo');
+      if (demoActive !== isDemoMode) {
+        api.setDemoMode(demoActive);
+        setIsDemoMode(demoActive);
+        if (demoActive) {
+          document.documentElement.classList.add('auth-authenticated');
+          document.documentElement.classList.remove('auth-unauthenticated');
           setAuthState('authenticated');
         } else {
-          api.initializeSession().then((isValid) => {
-            setAuthState(isValid ? 'authenticated' : 'unauthenticated');
-          });
+          document.documentElement.classList.add('auth-unauthenticated');
+          document.documentElement.classList.remove('auth-authenticated');
+          if (!api.hasActiveSession()) {
+            setAuthState('unauthenticated');
+            try {
+              window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
+            } catch {}
+          } else {
+            api.initializeSession().then((isValid) => {
+              setAuthState(isValid ? 'authenticated' : 'unauthenticated');
+            });
+          }
         }
-      } else if (!isDemo) {
+      } else if (!demoActive) {
+        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/demo')) {
+          try {
+            window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
+          } catch {}
+        }
         // Enforce fail-closed check on history navigation:
         if (!api.hasActiveSession()) {
           api.clearSession();
+          setIsDemoMode(false);
           setAuthState('unauthenticated');
+          document.documentElement.classList.add('auth-unauthenticated');
+          document.documentElement.classList.remove('auth-authenticated');
           try {
             window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
           } catch {}
@@ -459,7 +513,10 @@ export const App: React.FC = () => {
       if (e.key === 'dental_token' || e.key === 'dental_session_id') {
         if (!e.newValue) {
           api.clearSession();
+          setIsDemoMode(false);
           setAuthState('unauthenticated');
+          document.documentElement.classList.add('auth-unauthenticated');
+          document.documentElement.classList.remove('auth-authenticated');
           try {
             window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
           } catch {}
@@ -472,9 +529,14 @@ export const App: React.FC = () => {
     const handleAuthChange = (e: Event) => {
       const customEvent = e as CustomEvent;
       if (customEvent.detail?.authenticated === false) {
+        setIsDemoMode(false);
         setAuthState('unauthenticated');
+        document.documentElement.classList.add('auth-unauthenticated');
+        document.documentElement.classList.remove('auth-authenticated');
       } else if (customEvent.detail?.authenticated === true) {
         setAuthState('authenticated');
+        document.documentElement.classList.add('auth-authenticated');
+        document.documentElement.classList.remove('auth-unauthenticated');
       }
     };
     window.addEventListener('dental:auth_change', handleAuthChange);
@@ -486,12 +548,17 @@ export const App: React.FC = () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('dental:auth_change', handleAuthChange);
     };
-  }, []);
+  }, [isDemoMode]);
 
   const handleEnterDemo = () => {
+    try {
+      sessionStorage.setItem('dental_demo_active', 'true');
+    } catch {}
+    document.documentElement.classList.add('auth-authenticated');
+    document.documentElement.classList.remove('auth-unauthenticated');
     api.setDemoMode(true);
     try {
-      window.history.pushState({}, '', '/demo' + (window.location.search || ''));
+      window.history.pushState({ tab: 'dashboard', demo: true }, '', '/demo' + (window.location.search || ''));
     } catch {
       // browser history guard
     }
@@ -500,13 +567,19 @@ export const App: React.FC = () => {
   };
 
   const handleExitDemo = () => {
-    api.setDemoMode(false);
     try {
-      window.history.pushState({}, '', '/');
+      sessionStorage.removeItem('dental_demo_active');
+    } catch {}
+    document.documentElement.classList.add('auth-unauthenticated');
+    document.documentElement.classList.remove('auth-authenticated');
+    api.setDemoMode(false);
+    setIsDemoMode(false);
+    api.clearSession();
+    try {
+      window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
     } catch {
       // browser history guard
     }
-    setIsDemoMode(false);
     setAuthState(api.hasActiveSession() ? 'authenticated' : 'unauthenticated');
   };
 
@@ -552,35 +625,46 @@ export const App: React.FC = () => {
       <ToastProvider>
         {!effectiveAuthenticated ? (
           <LoginView
-            onSuccess={() => setAuthState('authenticated')}
+            onSuccess={() => {
+              document.documentElement.classList.add('auth-authenticated');
+              document.documentElement.classList.remove('auth-unauthenticated');
+              setAuthState('authenticated');
+            }}
             onExploreDemo={handleEnterDemo}
           />
         ) : (
-          <ClinicProvider>
-            <ErrorBoundary name="Clinic Operations Dashboard">
-              <DashboardContent
-                onLogout={() => {
-                  if (isDemoMode) {
-                    handleExitDemo();
-                  } else {
-                    setAuthState('unauthenticated');
-                    api.clearSession();
-                    api.logout().catch(() => {});
+          <div data-auth-protected="true" style={{ width: '100%', height: '100%' }}>
+            <ClinicProvider>
+              <ErrorBoundary name="Clinic Operations Dashboard">
+                <DashboardContent
+                  onLogout={() => {
                     try {
-                      localStorage.removeItem('dental_active_tab');
-                      localStorage.removeItem('dental_active_conversation_id');
+                      sessionStorage.removeItem('dental_demo_active');
                     } catch {}
-                    try {
-                      window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
-                    } catch {}
-                  }
-                }}
-                isDemoMode={isDemoMode}
-                onResetDemo={handleResetDemo}
-                onExitDemo={handleExitDemo}
-              />
-            </ErrorBoundary>
-          </ClinicProvider>
+                    document.documentElement.classList.add('auth-unauthenticated');
+                    document.documentElement.classList.remove('auth-authenticated');
+                    if (isDemoMode) {
+                      handleExitDemo();
+                    } else {
+                      setAuthState('unauthenticated');
+                      api.clearSession();
+                      api.logout().catch(() => {});
+                      try {
+                        localStorage.removeItem('dental_active_tab');
+                        localStorage.removeItem('dental_active_conversation_id');
+                      } catch {}
+                      try {
+                        window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
+                      } catch {}
+                    }
+                  }}
+                  isDemoMode={isDemoMode}
+                  onResetDemo={handleResetDemo}
+                  onExitDemo={handleExitDemo}
+                />
+              </ErrorBoundary>
+            </ClinicProvider>
+          </div>
         )}
       </ToastProvider>
     </ThemeProvider>

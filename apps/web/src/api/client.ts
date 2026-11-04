@@ -117,17 +117,17 @@ class ApiClient {
   // --- Session State Machine & Accessors ---
 
   public getStatus(): AuthStatus {
-    if (this.demoMode) return 'authenticated';
+    if (this.isDemoMode()) return 'authenticated';
     return this.status;
   }
 
   public getSessionId(): string | null {
-    if (this.demoMode) return 'demo-session-id';
+    if (this.isDemoMode()) return 'demo-session-id';
     return this.sessionId;
   }
 
   public hasActiveSession(): boolean {
-    if (this.demoMode) return true;
+    if (this.isDemoMode()) return true;
     if (this.status !== 'authenticated') return false;
     if (!this.token || !this.user) return false;
     if (typeof window !== 'undefined') {
@@ -143,6 +143,9 @@ class ApiClient {
   }
 
   public isDemoMode(): boolean {
+    if (typeof window !== 'undefined') {
+      return this.demoMode && sessionStorage.getItem('dental_demo_active') === 'true';
+    }
     return this.demoMode;
   }
 
@@ -150,6 +153,28 @@ class ApiClient {
     this.demoMode = enabled;
     if (enabled) {
       this.status = 'authenticated';
+      if (typeof window !== 'undefined') {
+        try {
+          sessionStorage.setItem('dental_demo_active', 'true');
+          document.documentElement.classList.add('auth-authenticated');
+          document.documentElement.classList.remove('auth-unauthenticated');
+        } catch {}
+      }
+    } else {
+      if (typeof window !== 'undefined') {
+        try {
+          sessionStorage.removeItem('dental_demo_active');
+        } catch {}
+      }
+      if (this.status === 'authenticated' && !this.token) {
+        this.status = 'unauthenticated';
+      }
+      if (typeof window !== 'undefined' && !this.hasActiveSession()) {
+        try {
+          document.documentElement.classList.add('auth-unauthenticated');
+          document.documentElement.classList.remove('auth-authenticated');
+        } catch {}
+      }
     }
   }
 
@@ -162,12 +187,12 @@ class ApiClient {
   }
 
   public getToken(): string | null {
-    if (this.demoMode) return 'demo-synthetic-session-token';
+    if (this.isDemoMode()) return 'demo-synthetic-session-token';
     return this.token;
   }
 
   public getUser(): AuthUser | null {
-    if (this.demoMode) {
+    if (this.isDemoMode()) {
       return demoStore.getUser();
     }
     return this.user;
@@ -191,6 +216,10 @@ class ApiClient {
       localStorage.setItem('dental_session_id', newSessionId);
     } catch {}
     if (typeof window !== 'undefined') {
+      try {
+        document.documentElement.classList.add('auth-authenticated');
+        document.documentElement.classList.remove('auth-unauthenticated');
+      } catch {}
       window.dispatchEvent(
         new CustomEvent('dental:auth_change', {
           detail: { authenticated: true, sessionId: newSessionId, user },
@@ -208,15 +237,21 @@ class ApiClient {
     this.token = null;
     this.refreshToken = null;
     this.user = null;
-    try {
-      localStorage.removeItem('dental_token');
-      localStorage.removeItem('dental_refresh_token');
-      localStorage.removeItem('dental_user');
-      localStorage.removeItem('dental_session_id');
-      localStorage.removeItem('dental_active_tab');
-      localStorage.removeItem('dental_active_conversation_id');
-    } catch {}
+    this.demoMode = false;
     if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem('dental_demo_active');
+        document.documentElement.classList.add('auth-unauthenticated');
+        document.documentElement.classList.remove('auth-authenticated');
+      } catch {}
+      try {
+        localStorage.removeItem('dental_token');
+        localStorage.removeItem('dental_refresh_token');
+        localStorage.removeItem('dental_user');
+        localStorage.removeItem('dental_session_id');
+        localStorage.removeItem('dental_active_tab');
+        localStorage.removeItem('dental_active_conversation_id');
+      } catch {}
       window.dispatchEvent(
         new CustomEvent('dental:auth_change', {
           detail: { authenticated: false, sessionId: null },

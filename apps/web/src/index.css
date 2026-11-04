@@ -3,6 +3,17 @@
    Warm Cream (Default) & Refined Near-Black (Dark) Semantic Theme Engine
    ========================================================================== */
 
+/* Fail-Closed Root Security Boundary:
+   Protected dashboard views are hidden by default and only revealed
+   when document explicitly carries .auth-authenticated class. */
+html:not(.auth-authenticated) [data-auth-protected="true"],
+html.auth-unauthenticated [data-auth-protected="true"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 :root {
   /* High-Quality Native Apple System Font Stack */
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", -system-ui, sans-serif;

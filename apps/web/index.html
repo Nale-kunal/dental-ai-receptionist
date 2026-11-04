@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="auth-unauthenticated" data-auth-state="unauthenticated">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230ea5e9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2C6.5 2 2 6.5 2 12c0 3.5 1.8 6.6 4.5 8.4l1.5-3.5a5 5 0 0 1 8 0l1.5 3.5C20.2 18.6 22 15.5 22 12c0-5.5-4.5-10-10-10z'/><path d='M9 10h.01'/><path d='M15 10h.01'/></svg>" />
@@ -17,6 +17,20 @@
           var t = localStorage.getItem('dental_clinic_theme') || 'light';
           document.documentElement.setAttribute('data-theme', t);
           document.documentElement.style.colorScheme = t;
+        } catch (e) {}
+        try {
+          var token = localStorage.getItem('dental_token');
+          var user = localStorage.getItem('dental_user');
+          var demoActive = sessionStorage.getItem('dental_demo_active') === 'true' && window.location.pathname.startsWith('/demo');
+          if ((token && user) || demoActive) {
+            document.documentElement.classList.add('auth-authenticated');
+            document.documentElement.classList.remove('auth-unauthenticated');
+            document.documentElement.setAttribute('data-auth-state', 'authenticated');
+          } else {
+            document.documentElement.classList.add('auth-unauthenticated');
+            document.documentElement.classList.remove('auth-authenticated');
+            document.documentElement.setAttribute('data-auth-state', 'unauthenticated');
+          }
         } catch (e) {}
       })();
     </script>
