@@ -37,11 +37,10 @@ export const Header: React.FC<HeaderProps> = ({
   const displayEmail = user?.email || '';
 
   const handleLogout = () => {
-    // Initiate background token revocation and synchronous session teardown
-    api.logout().catch(() => {});
     if (onLogout) {
       onLogout();
     } else {
+      api.logout().catch(() => {});
       window.location.reload();
     }
   };

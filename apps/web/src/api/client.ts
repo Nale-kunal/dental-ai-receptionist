@@ -52,6 +52,8 @@ export interface UpdateWhatsAppIntegrationPayload {
   validateNow?: boolean;
 }
 
+export type AuthStatus = 'initializing' | 'authenticated' | 'unauthenticated' | 'logging_out';
+
 export interface ValidateIntegrationResult {
   valid: boolean;
   status: 'valid' | 'invalid' | 'unvalidated' | 'unconfigured' | 'expired';
@@ -84,6 +86,8 @@ function isTokenExpired(token: string | null): boolean {
 }
 
 class ApiClient {
+  private status: AuthStatus = 'unauthenticated';
+  private sessionId: string | null = null;
   private token: string | null = null;
   private refreshToken: string | null = null;
   private user: AuthUser | null = null;
@@ -92,9 +96,10 @@ class ApiClient {
   private logoutGeneration: number = 0;
 
   constructor() {
-    this.token = localStorage.getItem('dental_token');
-    this.refreshToken = localStorage.getItem('dental_refresh_token');
-    const savedUser = localStorage.getItem('dental_user');
+    this.token = typeof window !== 'undefined' ? localStorage.getItem('dental_token') : null;
+    this.refreshToken = typeof window !== 'undefined' ? localStorage.getItem('dental_refresh_token') : null;
+    this.sessionId = typeof window !== 'undefined' ? localStorage.getItem('dental_session_id') : null;
+    const savedUser = typeof window !== 'undefined' ? localStorage.getItem('dental_user') : null;
     if (savedUser) {
       try {
         this.user = JSON.parse(savedUser);
@@ -102,9 +107,40 @@ class ApiClient {
         this.user = null;
       }
     }
+    if (this.token && this.user && !isTokenExpired(this.token)) {
+      this.status = 'authenticated';
+    } else {
+      this.status = 'unauthenticated';
+    }
   }
 
-  // --- Demo Mode Control ---
+  // --- Session State Machine & Accessors ---
+
+  public getStatus(): AuthStatus {
+    if (this.demoMode) return 'authenticated';
+    return this.status;
+  }
+
+  public getSessionId(): string | null {
+    if (this.demoMode) return 'demo-session-id';
+    return this.sessionId;
+  }
+
+  public hasActiveSession(): boolean {
+    if (this.demoMode) return true;
+    if (this.status !== 'authenticated') return false;
+    if (!this.token || !this.user) return false;
+    if (typeof window !== 'undefined') {
+      const storedToken = localStorage.getItem('dental_token');
+      const storedUser = localStorage.getItem('dental_user');
+      const storedSessionId = localStorage.getItem('dental_session_id');
+      if (!storedToken || !storedUser) return false;
+      if (this.sessionId && storedSessionId && storedSessionId !== this.sessionId) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   public isDemoMode(): boolean {
     return this.demoMode;
@@ -112,6 +148,9 @@ class ApiClient {
 
   public setDemoMode(enabled: boolean): void {
     this.demoMode = enabled;
+    if (enabled) {
+      this.status = 'authenticated';
+    }
   }
 
   public bumpLogoutGeneration(): void {
@@ -134,18 +173,38 @@ class ApiClient {
     return this.user;
   }
 
-  public setSession(token: string, user: AuthUser, refreshToken?: string) {
+  public setSession(token: string, user: AuthUser, refreshToken?: string): string {
+    const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
+    this.sessionId = newSessionId;
     this.token = token;
     this.user = user;
+    this.status = 'authenticated';
     if (refreshToken) {
       this.refreshToken = refreshToken;
-      localStorage.setItem('dental_refresh_token', refreshToken);
+      try {
+        localStorage.setItem('dental_refresh_token', refreshToken);
+      } catch {}
     }
-    localStorage.setItem('dental_token', token);
-    localStorage.setItem('dental_user', JSON.stringify(user));
+    try {
+      localStorage.setItem('dental_token', token);
+      localStorage.setItem('dental_user', JSON.stringify(user));
+      localStorage.setItem('dental_session_id', newSessionId);
+    } catch {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('dental:auth_change', {
+          detail: { authenticated: true, sessionId: newSessionId, user },
+        })
+      );
+    }
+    return newSessionId;
   }
 
-  public clearSession() {
+  public clearSession(): void {
+    this.logoutGeneration++;
+    this.authPromise = null;
+    this.status = 'unauthenticated';
+    this.sessionId = null;
     this.token = null;
     this.refreshToken = null;
     this.user = null;
@@ -153,34 +212,102 @@ class ApiClient {
       localStorage.removeItem('dental_token');
       localStorage.removeItem('dental_refresh_token');
       localStorage.removeItem('dental_user');
-    } catch { /* storage guard */ }
+      localStorage.removeItem('dental_session_id');
+      localStorage.removeItem('dental_active_tab');
+      localStorage.removeItem('dental_active_conversation_id');
+    } catch {}
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('dental:auth_change', { detail: { authenticated: false } }));
+      window.dispatchEvent(
+        new CustomEvent('dental:auth_change', {
+          detail: { authenticated: false, sessionId: null },
+        })
+      );
     }
   }
 
-  public async ensureAuthenticated(): Promise<boolean> {
-    // If in demo mode, session is always valid and authenticated
+  public async initializeSession(): Promise<boolean> {
     if (this.demoMode) {
+      this.status = 'authenticated';
       return true;
     }
 
-    // If active and valid token exists, return immediately
+    const storedToken = typeof window !== 'undefined' ? localStorage.getItem('dental_token') : null;
+    const storedRefresh = typeof window !== 'undefined' ? localStorage.getItem('dental_refresh_token') : null;
+    const storedUserRaw = typeof window !== 'undefined' ? localStorage.getItem('dental_user') : null;
+    const storedSessionId = typeof window !== 'undefined' ? localStorage.getItem('dental_session_id') : null;
+
+    if (!storedToken || !storedUserRaw) {
+      this.clearSession();
+      return false;
+    }
+
+    let parsedUser: AuthUser | null = null;
+    try {
+      parsedUser = JSON.parse(storedUserRaw);
+    } catch {
+      this.clearSession();
+      return false;
+    }
+
+    if (!parsedUser) {
+      this.clearSession();
+      return false;
+    }
+
+    this.token = storedToken;
+    this.refreshToken = storedRefresh;
+    this.user = parsedUser;
+    this.sessionId = storedSessionId || ('sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9));
+
+    if (!isTokenExpired(this.token)) {
+      this.status = 'authenticated';
+      return true;
+    }
+
+    if (this.refreshToken) {
+      const refreshed = await this.ensureAuthenticated();
+      if (refreshed && this.token) {
+        this.status = 'authenticated';
+        return true;
+      }
+    }
+
+    this.clearSession();
+    return false;
+  }
+
+  public async ensureAuthenticated(): Promise<boolean> {
+    if (this.demoMode) {
+      this.status = 'authenticated';
+      return true;
+    }
+
+    if (this.status === 'logging_out') {
+      return false;
+    }
+
+    if (typeof window !== 'undefined') {
+      const storedToken = localStorage.getItem('dental_token');
+      if (!storedToken) {
+        this.clearSession();
+        return false;
+      }
+    }
+
     if (this.token && !isTokenExpired(this.token) && this.user) {
+      this.status = 'authenticated';
       return true;
     }
 
-    // Deduplicate in-flight authentication attempts
     if (this.authPromise) {
       return this.authPromise;
     }
 
-    // Capture generation counter at call time to detect intervening logout
     const capturedGeneration = this.logoutGeneration;
+    const capturedSessionId = this.sessionId;
 
     this.authPromise = (async () => {
       try {
-        // 1. Try refresh token if available
         if (this.refreshToken) {
           try {
             const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
@@ -190,14 +317,16 @@ class ApiClient {
             });
             const refreshJson: any = await refreshRes.json();
 
-            // Check if logout happened while we were waiting
-            if (this.logoutGeneration !== capturedGeneration) {
+            if (this.logoutGeneration !== capturedGeneration || this.sessionId !== capturedSessionId) {
               return false;
             }
 
             if (refreshRes.ok && refreshJson.ok && refreshJson.data?.accessToken) {
               this.token = refreshJson.data.accessToken;
-              localStorage.setItem('dental_token', this.token!);
+              this.status = 'authenticated';
+              try {
+                localStorage.setItem('dental_token', this.token!);
+              } catch {}
               return true;
             }
           } catch {
@@ -205,18 +334,14 @@ class ApiClient {
           }
         }
 
-        // Check generation again before clearing
-        if (this.logoutGeneration !== capturedGeneration) {
+        if (this.logoutGeneration !== capturedGeneration || this.sessionId !== capturedSessionId) {
           return false;
         }
 
-        // Clean tenant isolation: Never automatically fall back to demo clinic credentials.
-        // If unauthenticated or token expired, return false so the user is directed to LoginView.
         this.clearSession();
         return false;
       } catch (e) {
-        console.warn('Session verification notice:', e);
-        if (this.logoutGeneration === capturedGeneration) {
+        if (this.logoutGeneration === capturedGeneration && this.sessionId === capturedSessionId) {
           this.clearSession();
         }
         return false;
@@ -229,15 +354,26 @@ class ApiClient {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    // Fail-closed safety guard: Never issue live HTTP calls while in demo mode
     if (this.demoMode) {
       throw new Error(`Demo Mode Safety Violation: Attempted live HTTP request to ${endpoint}`);
     }
 
-    // Make sure we have a valid unexpired token before firing request
-    if (!endpoint.includes('/auth/login') && !endpoint.includes('/auth/signup') && isTokenExpired(this.token)) {
-      await this.ensureAuthenticated();
+    if (!endpoint.includes('/auth/login') && !endpoint.includes('/auth/signup')) {
+      if (!this.hasActiveSession()) {
+        const authed = await this.ensureAuthenticated();
+        if (!authed) {
+          throw new Error('Unauthenticated');
+        }
+      } else if (isTokenExpired(this.token)) {
+        const authed = await this.ensureAuthenticated();
+        if (!authed) {
+          throw new Error('Unauthenticated');
+        }
+      }
     }
+
+    const requestSessionId = this.sessionId;
+    const requestGeneration = this.logoutGeneration;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -253,18 +389,29 @@ class ApiClient {
       headers,
     });
 
+    if (this.logoutGeneration !== requestGeneration || (requestSessionId && this.sessionId !== requestSessionId)) {
+      throw new Error('Session terminated');
+    }
+
     if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/signup')) {
-      // Try refresh once
       const reAuthed = await this.ensureAuthenticated();
-      if (reAuthed && this.token) {
+      if (reAuthed && this.token && (!requestSessionId || this.sessionId === requestSessionId)) {
         headers['Authorization'] = `Bearer ${this.token}`;
         response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+        if (this.logoutGeneration !== requestGeneration || (requestSessionId && this.sessionId !== requestSessionId)) {
+          throw new Error('Session terminated');
+        }
       } else {
         this.clearSession();
+        throw new Error('Session expired');
       }
     }
 
     const json: ApiResponse<T> = await response.json();
+    if (this.logoutGeneration !== requestGeneration || (requestSessionId && this.sessionId !== requestSessionId)) {
+      throw new Error('Session terminated');
+    }
+
     if (!response.ok || !json.ok) {
       const errorMsg = json.message || `Request failed with status ${response.status}`;
       const err: any = new Error(errorMsg);
@@ -328,28 +475,24 @@ class ApiClient {
   public async logout(): Promise<void> {
     if (this.demoMode) {
       this.setDemoMode(false);
+      this.status = 'unauthenticated';
       return;
     }
 
-    // 1. Bump generation to invalidate any in-flight ensureAuthenticated() calls
-    this.logoutGeneration++;
-
-    // 2. Cancel any in-flight auth deduplication promise
-    this.authPromise = null;
-
-    // 3. Clear session synchronously (before any await)
+    this.status = 'logging_out';
     const refreshTokenSnapshot = this.refreshToken;
     this.clearSession();
 
-    // 4. Fire revocation request to backend in background (do not block logout on network)
     if (refreshTokenSnapshot) {
-      fetch(`${API_BASE}/auth/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: refreshTokenSnapshot }),
-      }).catch(() => {
+      try {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: refreshTokenSnapshot }),
+        });
+      } catch {
         // Network errors on logout are acceptable - client session is already cleared
-      });
+      }
     }
   }
 

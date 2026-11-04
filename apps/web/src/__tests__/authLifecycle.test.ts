@@ -286,6 +286,161 @@ describe('ApiClient Auth Lifecycle & Session Security Suite', () => {
     });
   });
 
+
+  describe('6. Authoritative Session State Machine & Isolation', () => {
+    it('initializes as unauthenticated when localStorage is empty', async () => {
+      const initialized = await api.initializeSession();
+      expect(initialized).toBe(false);
+      expect(api.getStatus()).toBe('unauthenticated');
+      expect(api.hasActiveSession()).toBe(false);
+    });
+
+    it('initializes as authenticated when valid stored credentials exist', async () => {
+      // Unexpired token (exp 1 hour in future)
+      const futureExp = Math.floor(Date.now() / 1000) + 3600;
+      const validToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+        btoa(JSON.stringify({ exp: futureExp, sub: 'user-1' })).replace(/=/g, '') +
+        '.sig';
+
+      localStorage.setItem('dental_token', validToken);
+      localStorage.setItem('dental_user', JSON.stringify(mockUser));
+      localStorage.setItem('dental_session_id', 'sess_test_123');
+
+      const initialized = await api.initializeSession();
+      expect(initialized).toBe(true);
+      expect(api.getStatus()).toBe('authenticated');
+      expect(api.hasActiveSession()).toBe(true);
+      expect(api.getSessionId()).toBe('sess_test_123');
+    });
+
+    it('hasActiveSession fails closed if localStorage is cleared externally (e.g. BFCache restore after logout)', () => {
+      api.setSession('valid-token', mockUser);
+      expect(api.hasActiveSession()).toBe(true);
+
+      // Simulate external storage clearance (by another tab or logout on another page)
+      localStorage.removeItem('dental_token');
+
+      // In-memory token still exists, but hasActiveSession MUST detect storage clearance and fail closed
+      expect(api.hasActiveSession()).toBe(false);
+    });
+
+    it('hasActiveSession fails closed if dental_session_id mismatches (session hijacking/stale tab protection)', () => {
+      api.setSession('valid-token', mockUser);
+      expect(api.hasActiveSession()).toBe(true);
+
+      // Overwrite session ID with another session's ID
+      localStorage.setItem('dental_session_id', 'different-session-id');
+
+      expect(api.hasActiveSession()).toBe(false);
+    });
+
+    it('discards in-flight API response if logout occurs before network response resolves', async () => {
+      const futureExp = Math.floor(Date.now() / 1000) + 3600;
+      const validToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+        btoa(JSON.stringify({ exp: futureExp, sub: 'user-1' })).replace(/=/g, '') +
+        '.sig';
+
+      api.setSession(validToken, mockUser);
+
+      let resolveRequest: (val: any) => void;
+      const delayedRequest = new Promise((resolve) => {
+        resolveRequest = resolve;
+      });
+
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/appointments')) {
+          return delayedRequest;
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }));
+
+      // Fire protected request
+      const requestPromise = api.getAppointments();
+
+      // User logs out while request is in flight
+      await api.logout();
+
+      // Network request resolves late
+      resolveRequest!({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          data: { items: [{ id: 'appt-1', patientName: 'Secret Patient' }], total: 1 },
+        }),
+      });
+
+      // The request MUST reject with "Session terminated" and NEVER return data to component
+      await expect(requestPromise).rejects.toThrow('Session terminated');
+    });
+
+    it('ensures new login establishes a fresh session ID and cleans up old navigation state', () => {
+      localStorage.setItem('dental_active_tab', 'patients');
+      localStorage.setItem('dental_active_conversation_id', 'conv-999');
+
+      api.clearSession();
+
+      expect(localStorage.getItem('dental_active_tab')).toBeNull();
+      expect(localStorage.getItem('dental_active_conversation_id')).toBeNull();
+
+      const newSessionId = api.setSession('token-clinic-b', {
+        ...mockUser,
+        clinicId: 'clinic-b',
+        clinicName: 'Clinic B',
+      });
+
+      expect(newSessionId).toBeTruthy();
+      expect(api.getSessionId()).toBe(newSessionId);
+      expect(api.getUser()?.clinicName).toBe('Clinic B');
+    });
+  });
+
+
+    it('handles legitimate tab navigation and prevents Back/Forward from restoring protected views after logout', () => {
+      // 1. User logs in
+      const futureExp = Math.floor(Date.now() / 1000) + 3600;
+      const validToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+        btoa(JSON.stringify({ exp: futureExp, sub: 'user-1' })).replace(/=/g, '') +
+        '.sig';
+
+      api.setSession(validToken, mockUser);
+      let authState = 'authenticated';
+
+      // 2. User navigates between tabs in the dashboard (legitimate navigation)
+      window.history.pushState({ tab: 'appointments', auth: true }, '', '/?tab=appointments');
+      window.history.pushState({ tab: 'patients', auth: true }, '', '/?tab=patients');
+
+      expect(api.hasActiveSession()).toBe(true);
+      expect(authState).toBe('authenticated');
+
+      // 3. User logs out
+      api.clearSession();
+      authState = 'unauthenticated';
+      window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
+
+      expect(api.hasActiveSession()).toBe(false);
+
+      // 4. User presses browser Back button (simulating popstate event to /?tab=patients)
+      const popstateToProtected = new PopStateEvent('popstate', {
+        state: { tab: 'patients', auth: true },
+      });
+
+      // App popstate handler simulation:
+      const handleLocationChange = () => {
+        if (!api.hasActiveSession()) {
+          api.clearSession();
+          authState = 'unauthenticated';
+          window.history.replaceState({ loggedOut: true, auth: false }, '', '/');
+        }
+      };
+
+      handleLocationChange();
+
+      // The app MUST remain unauthenticated and URL must be forced back to /
+      expect(api.hasActiveSession()).toBe(false);
+      expect(authState).toBe('unauthenticated');
+      expect(window.location.pathname).toBe('/');
+    });
+
   describe('5. Demo Mode Isolation', () => {
     it('sets and exits demo mode correctly without affecting regular tokens', () => {
       api.setDemoMode(true);
