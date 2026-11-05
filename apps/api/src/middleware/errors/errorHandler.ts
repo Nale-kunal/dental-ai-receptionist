@@ -58,6 +58,15 @@ export class ConflictError extends AppError {
   }
 }
 
+export class InvalidUuidError extends AppError {
+  constructor(fieldName = 'id') {
+    super(400, 'INVALID_UUID', `Invalid ${fieldName} format`, [
+      { field: fieldName, message: `Invalid ${fieldName} format` },
+    ]);
+    this.name = 'InvalidUuidError';
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction): void {
   // Request correlation for log tracing

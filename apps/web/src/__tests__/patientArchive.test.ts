@@ -93,3 +93,4 @@ describe('Frontend: Clinical Categories & Patient Archive Lifecycle', () => {
     });
   });
 });
+

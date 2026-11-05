@@ -8,7 +8,7 @@
  */
 
 import { Request } from 'express';
-import { ForbiddenError, UnauthorizedError } from '../errors/errorHandler';
+import { ForbiddenError, UnauthorizedError, InvalidUuidError } from '../errors/errorHandler';
 
 /**
  * Gets the authenticated user's clinic ID from the request.
@@ -52,6 +52,6 @@ export function isValidUuid(value: string): boolean {
 
 export function assertValidUuid(value: string, fieldName = 'id'): void {
   if (!isValidUuid(value)) {
-    throw new Error(`Invalid ${fieldName} format`);
+    throw new InvalidUuidError(fieldName);
   }
 }

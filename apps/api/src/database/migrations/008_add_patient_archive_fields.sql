@@ -52,3 +52,4 @@ COMMENT ON TABLE api.patient_audit_events IS 'Audit trail tracking patient archi
 -- ALTER TABLE api.patients DROP COLUMN IF EXISTS archived_by;
 -- ALTER TABLE api.patients DROP COLUMN IF EXISTS archived_at;
 -- ALTER TABLE api.patients DROP COLUMN IF EXISTS is_archived;
+

@@ -6,8 +6,8 @@ export const patientsRouter = Router();
 patientsRouter.use(authenticate);
 
 patientsRouter.get('/', ctrl.listPatients);
-patientsRouter.get('/archived', ctrl.listArchivedPatients);
 patientsRouter.get('/archived/count', ctrl.getArchivedCount);
+patientsRouter.get('/archived', ctrl.listArchivedPatients);
 patientsRouter.post('/', ctrl.createPatient);
 patientsRouter.get('/:id', ctrl.getPatient);
 patientsRouter.patch('/:id', ctrl.updatePatient);
