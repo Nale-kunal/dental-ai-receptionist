@@ -100,6 +100,7 @@ model clinics {
   messages                   messages[]
   notifications              notifications[]
   patients                   patients[]
+  patient_audit_events       patient_audit_events[]
   schedule_blocks            schedule_blocks[]
   services                   services[]
   users                      users[]
@@ -306,12 +307,19 @@ model patients {
   consent_marketing Boolean         @default(false)
   opt_out_at        DateTime?       @db.Timestamptz(6)
   notes             String?
+  is_archived       Boolean         @default(false)
+  archived_at       DateTime?       @db.Timestamptz(6)
+  archived_by       String?         @db.Uuid
+  archive_reason    String?
+  restored_at       DateTime?       @db.Timestamptz(6)
+  restored_by       String?         @db.Uuid
   created_at        DateTime        @default(now()) @db.Timestamptz(6)
   updated_at        DateTime        @default(now()) @db.Timestamptz(6)
   appointments      appointments[]
   conversations     conversations[]
   handoffs          handoffs[]
   notifications     notifications[]
+  patient_audit_events patient_audit_events[]
   clinics           clinics         @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([clinic_id, phone])
@@ -523,3 +531,19 @@ model clinic_whatsapp_integrations {
   @@schema("api")
 }
 
+model patient_audit_events {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinic_id   String   @db.Uuid
+  patient_id  String   @db.Uuid
+  action      String   @db.VarChar(50)
+  user_id     String?  @db.Uuid
+  user_email  String?
+  reason      String?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  clinics     clinics  @relation(fields: [clinic_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  patients    patients @relation(fields: [patient_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([clinic_id, created_at(sort: Desc)], map: "patient_audit_clinic_idx")
+  @@index([patient_id], map: "patient_audit_patient_idx")
+  @@schema("api")
+}

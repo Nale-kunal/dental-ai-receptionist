@@ -233,6 +233,26 @@ export async function bookAppointment(clinicId: string, data: BookAppointmentReq
   assertValidUuid(data.patientId, 'patientId');
   assertValidUuid(data.serviceId, 'serviceId');
 
+  // Verify patient is active and not archived
+  const patientRows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT id, full_name, is_archived FROM api.patients WHERE id = $1::uuid AND clinic_id = $2::uuid`,
+    data.patientId,
+    clinicId
+  ).catch(async () => {
+    return prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, full_name, false as is_archived FROM api.patients WHERE id = $1::uuid AND clinic_id = $2::uuid`,
+      data.patientId,
+      clinicId
+    );
+  });
+
+  if (!patientRows || patientRows.length === 0) {
+    throw new NotFoundError('Patient');
+  }
+  if (patientRows[0].is_archived) {
+    throw new AppError(400, 'PATIENT_ARCHIVED', `Patient "${patientRows[0].full_name}" is archived and cannot receive new appointment bookings. Please restore the patient record first.`);
+  }
+
   const startsAt = new Date(data.startsAt);
   if (isNaN(startsAt.getTime())) {
     throw new AppError(422, 'VALIDATION', 'Invalid appointment start time.');

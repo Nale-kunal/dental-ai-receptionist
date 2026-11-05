@@ -632,6 +632,50 @@ class ApiClient {
     }>(`/patients${qs ? `?${qs}` : ''}`);
   }
 
+  public async getArchivedPatients(params?: { page?: number; pageSize?: number; search?: string }) {
+    if (this.demoMode) {
+      return demoStore.getArchivedPatients(params);
+    }
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', params.page.toString());
+    if (params?.pageSize) query.set('pageSize', params.pageSize.toString());
+    if (params?.search) query.set('search', params.search);
+    const qs = query.toString();
+    return this.request<{
+      items: any[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+    }>(`/patients/archived${qs ? `?${qs}` : ''}`);
+  }
+
+  public async getArchivedPatientsCount() {
+    if (this.demoMode) {
+      return { count: demoStore.getArchivedPatientsCount() };
+    }
+    return this.request<{ count: number }>('/patients/archived/count');
+  }
+
+  public async archivePatient(id: string, reason?: string) {
+    if (this.demoMode) {
+      return demoStore.archivePatient(id, reason);
+    }
+    return this.request<any>(`/patients/${id}/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  public async restorePatient(id: string) {
+    if (this.demoMode) {
+      return demoStore.restorePatient(id);
+    }
+    return this.request<any>(`/patients/${id}/restore`, {
+      method: 'POST',
+    });
+  }
+
   public async getPatient(id: string) {
     if (this.demoMode) {
       return demoStore.getPatient(id);

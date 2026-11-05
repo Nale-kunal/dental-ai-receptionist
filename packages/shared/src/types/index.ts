@@ -200,6 +200,7 @@ export interface AppointmentFilters extends PaginationParams {
 export interface Patient {
   id: string;
   clinicId: string;
+  fullName?: string;
   firstName: string;
   lastName: string;
   phone: string | null;
@@ -208,6 +209,13 @@ export interface Patient {
   gender: string | null;
   notes: string | null;
   isActive: boolean;
+  isArchived?: boolean;
+  archivedAt?: string | null;
+  archivedBy?: string | null;
+  archiveReason?: string | null;
+  restoredAt?: string | null;
+  restoredBy?: string | null;
+  consentWhatsapp?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -216,15 +224,22 @@ export interface PatientSummary {
   id: string;
   firstName: string;
   lastName: string;
+  fullName?: string;
   phone: string | null;
   email: string | null;
+  isArchived?: boolean;
 }
 
 export interface PatientFilters extends PaginationParams {
   search?: string;
   isActive?: boolean;
-  sortBy?: 'lastName' | 'firstName' | 'createdAt';
+  isArchived?: boolean;
+  sortBy?: 'lastName' | 'firstName' | 'createdAt' | 'archivedAt';
   sortOrder?: 'asc' | 'desc';
+}
+
+export interface ArchivePatientRequest {
+  reason?: string;
 }
 
 export interface UpsertPatientRequest {

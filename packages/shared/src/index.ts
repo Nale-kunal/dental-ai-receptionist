@@ -1,5 +1,6 @@
 export * from './types/index.js';
 export * from './constants/index.js';
+export { CLINICAL_CATEGORIES, ClinicalCategory } from './constants/index.js';
 export {
   formatDateInTimezone,
   formatTimeInTimezone,

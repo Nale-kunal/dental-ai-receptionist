@@ -85,3 +85,22 @@ export const INTEGRATION_STATUS_LABELS: Record<string, string> = {
   healthy: 'Connected',
   error: 'Connection Error',
 };
+
+// ─── Clinical Treatment Categories ───────────────────────────────────────────
+export const CLINICAL_CATEGORIES = [
+  'General Dentistry',
+  'Preventative Care',
+  'Cosmetic Dentistry',
+  'Restorative Dentistry',
+  'Prosthodontics',
+  'Implant Dentistry',
+  'Orthodontics',
+  'Endodontics (Root Canal)',
+  'Oral Surgery & Extractions',
+  'Periodontics (Gum Health)',
+  'Pediatric Dentistry',
+  'Diagnostic & Imaging',
+  'Emergency Care',
+] as const;
+
+export type ClinicalCategory = (typeof CLINICAL_CATEGORIES)[number];

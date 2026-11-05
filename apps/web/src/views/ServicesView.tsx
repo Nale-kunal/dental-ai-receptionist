@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api/client';
 import { useToast } from '../context/ToastContext';
-import { Clock, ShieldCheck, Tag, Plus, Edit2, Archive, X, DollarSign, FileText, Layers } from 'lucide-react';
+import { CLINICAL_CATEGORIES } from '@dental/shared';
+import { Clock, ShieldCheck, Tag, Plus, Edit2, Archive, X, DollarSign, FileText, Layers, Filter } from 'lucide-react';
 
 export const ServicesView: React.FC = () => {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<any[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState('all');
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -235,19 +237,46 @@ export const ServicesView: React.FC = () => {
             Configure treatment catalog, duration, pricing models, buffer periods, and booking availability.
           </p>
         </div>
-        <button
-          onClick={handleOpenAdd}
-          className="btn btn-primary"
-          style={{
-            height: '32px',
-            padding: '0 12px',
-            fontSize: '12.5px',
-            gap: '6px',
-          }}
-        >
-          <Plus size={14} />
-          Add Treatment / Service
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Filter size={13} color="var(--text-secondary)" />
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="form-input"
+              style={{
+                height: '32px',
+                fontSize: '12px',
+                padding: '0 8px',
+                minWidth: '180px',
+              }}
+              aria-label="Filter by Clinical Category"
+            >
+              <option value="all">All Categories ({services.length})</option>
+              {CLINICAL_CATEGORIES.map((cat) => {
+                const count = services.filter((s) => s.category === cat).length;
+                return (
+                  <option key={cat} value={cat}>
+                    {cat} {count > 0 ? `(${count})` : ''}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+          <button
+            onClick={handleOpenAdd}
+            className="btn btn-primary"
+            style={{
+              height: '32px',
+              padding: '0 12px',
+              fontSize: '12.5px',
+              gap: '6px',
+            }}
+          >
+            <Plus size={14} />
+            Add Treatment / Service
+          </button>
+        </div>
       </div>
 
       {/* Services Grid */}
@@ -279,8 +308,49 @@ export const ServicesView: React.FC = () => {
               Newly registered clinics start with a clean slate. Click "Add Treatment / Service" above to build your clinical service catalog and set treatment pricing.
             </p>
           </div>
-        ) : (
-          services.map((s) => (
+        ) : (() => {
+          const filtered = categoryFilter === 'all'
+            ? services
+            : services.filter((s) => s.category === categoryFilter);
+
+          if (filtered.length === 0) {
+            return (
+              <div
+                style={{
+                  gridColumn: '1 / -1',
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px dashed var(--border-card)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '32px 20px',
+                  textAlign: 'center',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'var(--accent-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)' }}>
+                  <Filter size={18} />
+                </div>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '13.5px' }}>
+                  No Services Found in "{categoryFilter}"
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                  There are no clinical services currently filed under this category.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setCategoryFilter('all')}
+                  style={{ marginTop: '4px', height: '28px', fontSize: '12px', padding: '0 10px' }}
+                >
+                  View All Categories ({services.length})
+                </button>
+              </div>
+            );
+          }
+
+          return filtered.map((s) => (
             <div
               key={s.id}
               style={{
@@ -407,8 +477,8 @@ export const ServicesView: React.FC = () => {
                 </button>
               </div>
             </div>
-          ))
-        )}
+          ));
+        })()}
       </div>
 
       {/* Add / Edit Service Modal */}
@@ -507,15 +577,14 @@ export const ServicesView: React.FC = () => {
                     className="form-input"
                     style={{ width: '100%', fontSize: '13px' }}
                   >
-                    <option value="General Dentistry">General Dentistry</option>
-                    <option value="Preventative Care">Preventative Care</option>
-                    <option value="Cosmetic Dentistry">Cosmetic Dentistry</option>
-                    <option value="Orthodontics">Orthodontics</option>
-                    <option value="Endodontics">Endodontics (Root Canal)</option>
-                    <option value="Oral Surgery">Oral Surgery & Extractions</option>
-                    <option value="Periodontics">Periodontics (Gum Health)</option>
-                    <option value="Pediatric Dentistry">Pediatric Dentistry</option>
-                    <option value="Emergency Care">Emergency Care</option>
+                    {CLINICAL_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                    {category && !CLINICAL_CATEGORIES.includes(category as any) && (
+                      <option value={category}>{category}</option>
+                    )}
                   </select>
                 </div>
               </div>

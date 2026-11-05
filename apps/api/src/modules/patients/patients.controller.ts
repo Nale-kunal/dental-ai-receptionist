@@ -46,10 +46,15 @@ function normalizePatientNames<T extends { fullName?: string; firstName?: string
 const filterSchema = z.object({
   search: z.string().max(100).optional(),
   isActive: z.coerce.boolean().optional(),
+  isArchived: z.coerce.boolean().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  sortBy: z.enum(['lastName', 'firstName', 'createdAt']).default('lastName'),
+  sortBy: z.enum(['lastName', 'firstName', 'createdAt', 'archivedAt']).default('lastName'),
   sortOrder: z.enum(['asc', 'desc']).default('asc'),
+});
+
+const archiveSchema = z.object({
+  reason: z.string().max(1000).optional(),
 });
 
 export async function listPatients(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -61,6 +66,65 @@ export async function listPatients(req: Request, res: Response, next: NextFuncti
     }
     const result = await repo.listPatients(clinicId, parsed.data);
     sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listArchivedPatients(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const clinicId = getAuthenticatedClinicId(req);
+    const parsed = filterSchema.safeParse(req.query);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid query parameters', parsed.error.errors.map((e) => ({ field: e.path.join('.'), message: e.message })));
+    }
+    const result = await repo.listPatients(clinicId, { ...parsed.data, isArchived: true });
+    sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getArchivedCount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const clinicId = getAuthenticatedClinicId(req);
+    const count = await repo.getArchivedPatientsCount(clinicId);
+    sendSuccess(res, { count });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function archivePatient(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const clinicId = getAuthenticatedClinicId(req);
+    const parsed = archiveSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new ValidationError('Validation failed', parsed.error.errors.map((e) => ({ field: e.path.join('.'), message: e.message })));
+    }
+    const patient = await repo.archivePatient(
+      clinicId,
+      req.params.id,
+      parsed.data.reason,
+      req.user?.userId,
+      req.user?.email
+    );
+    sendSuccess(res, patient, 'Patient archived successfully');
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function restorePatient(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const clinicId = getAuthenticatedClinicId(req);
+    const patient = await repo.restorePatient(
+      clinicId,
+      req.params.id,
+      req.user?.userId,
+      req.user?.email
+    );
+    sendSuccess(res, patient, 'Patient restored successfully');
   } catch (err) {
     next(err);
   }

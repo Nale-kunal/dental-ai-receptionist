@@ -151,6 +151,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       return;
     }
 
+    const patient = patients.find((p) => p.id === selectedPatientId);
+    if (patient?.isArchived) {
+      toast.error('Booking Rejected', 'Cannot book appointments for archived patients. Please restore the patient first.');
+      return;
+    }
+
     try {
       setSubmitting(true);
       const matchingSlot = availableSlots.find((s) => s.time === time);
@@ -177,12 +183,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     }
   };
 
-  const filteredPatients = patients.filter((p) =>
-    patientSearch
+  const filteredPatients = patients.filter((p) => {
+    if (p.isArchived) return false;
+    return patientSearch
       ? p.fullName.toLowerCase().includes(patientSearch.toLowerCase()) ||
         p.phone.includes(patientSearch)
-      : true
-  );
+      : true;
+  });
 
   return createPortal(
     <div

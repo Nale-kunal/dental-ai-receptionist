@@ -180,6 +180,11 @@ export class DemoStore {
   }): any {
     const doctor = this.data.doctors.find((d) => d.id === data.doctorId);
     const patient = this.data.patients.find((p) => p.id === data.patientId);
+
+    if (patient?.isArchived) {
+      throw new Error(`Cannot book appointment for archived patient ${patient.fullName}. Please restore the patient first.`);
+    }
+
     const service = this.data.services.find((s) => s.id === data.serviceId);
 
     const duration = service?.durationMinutes || 45;
@@ -311,7 +316,7 @@ export class DemoStore {
     pageSize: number;
     totalPages: number;
   } {
-    let list = [...this.data.patients];
+    let list = this.data.patients.filter((p) => p.isArchived !== true);
 
     if (params?.search && params.search.trim()) {
       const q = params.search.trim().toLowerCase();
@@ -337,6 +342,114 @@ export class DemoStore {
       pageSize,
       totalPages,
     };
+  }
+
+  public getArchivedPatients(params?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+  }): {
+    items: any[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  } {
+    let list = this.data.patients.filter((p) => p.isArchived === true);
+
+    if (params?.search && params.search.trim()) {
+      const q = params.search.trim().toLowerCase();
+      list = list.filter((p) => {
+        const name = (p.fullName || '').toLowerCase();
+        const phone = (p.phone || '').toLowerCase();
+        const email = (p.email || '').toLowerCase();
+        return name.includes(q) || phone.includes(q) || email.includes(q);
+      });
+    }
+
+    const total = list.length;
+    const page = Math.max(1, params?.page || 1);
+    const pageSize = Math.max(1, params?.pageSize || 10);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const startIdx = (page - 1) * pageSize;
+    const items = list.slice(startIdx, startIdx + pageSize);
+
+    return {
+      items,
+      total,
+      page,
+      pageSize,
+      totalPages,
+    };
+  }
+
+  public getArchivedPatientsCount(): number {
+    return this.data.patients.filter((p) => p.isArchived === true).length;
+  }
+
+  public archivePatient(id: string, reason?: string): any {
+    const patient = this.data.patients.find((p) => p.id === id);
+    if (!patient) {
+      throw new Error(`Patient ${id} not found.`);
+    }
+    if (patient.isArchived) {
+      return { ...patient };
+    }
+
+    // Check for active upcoming appointments
+    const now = new Date();
+    const hasUpcoming = this.data.appointments.some((a) => {
+      if (a.patientId !== id) return false;
+      const status = (a.status || '').toLowerCase();
+      const isPendingOrConfirmed = status === 'pending' || status === 'confirmed';
+      const isUpcoming = new Date(a.startsAt).getTime() >= now.getTime();
+      return isPendingOrConfirmed && isUpcoming;
+    });
+
+    if (hasUpcoming) {
+      throw new Error('Cannot archive patient with active upcoming appointments. Please reschedule, complete, or cancel all upcoming appointments first.');
+    }
+
+    patient.isArchived = true;
+    patient.archivedAt = new Date().toISOString();
+    patient.archivedBy = this.data.user.id || 'usr-admin';
+    patient.archiveReason = reason || null;
+    patient.restoredAt = null;
+    patient.restoredBy = null;
+    patient.updatedAt = new Date().toISOString();
+
+    this.recordAudit({
+      action: 'PATIENT_ARCHIVED',
+      entityType: 'patient',
+      entityId: patient.id,
+      details: `Archived patient ${patient.fullName}. Reason: ${reason || 'No reason provided'}`,
+    });
+
+    return { ...patient };
+  }
+
+  public restorePatient(id: string): any {
+    const patient = this.data.patients.find((p) => p.id === id);
+    if (!patient) {
+      throw new Error(`Patient ${id} not found.`);
+    }
+    if (!patient.isArchived) {
+      return { ...patient };
+    }
+
+    patient.isArchived = false;
+    patient.restoredAt = new Date().toISOString();
+    patient.restoredBy = this.data.user.id || 'usr-admin';
+    patient.updatedAt = new Date().toISOString();
+
+    this.recordAudit({
+      action: 'PATIENT_RESTORED',
+      entityType: 'patient',
+      entityId: patient.id,
+      details: `Restored patient ${patient.fullName} to active directory.`,
+    });
+
+    return { ...patient };
   }
 
   public getPatient(id: string): any {
@@ -369,6 +482,12 @@ export class DemoStore {
       dateOfBirth: data.dateOfBirth || null,
       notes: data.notes || '',
       whatsappId: data.whatsappId || data.phone.replace(/[^0-9]/g, ''),
+      isArchived: false,
+      archivedAt: null,
+      archivedBy: null,
+      archiveReason: null,
+      restoredAt: null,
+      restoredBy: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

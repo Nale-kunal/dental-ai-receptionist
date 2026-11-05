@@ -6,7 +6,11 @@ export const patientsRouter = Router();
 patientsRouter.use(authenticate);
 
 patientsRouter.get('/', ctrl.listPatients);
+patientsRouter.get('/archived', ctrl.listArchivedPatients);
+patientsRouter.get('/archived/count', ctrl.getArchivedCount);
 patientsRouter.post('/', ctrl.createPatient);
 patientsRouter.get('/:id', ctrl.getPatient);
 patientsRouter.patch('/:id', ctrl.updatePatient);
+patientsRouter.post('/:id/archive', ctrl.archivePatient);
+patientsRouter.post('/:id/restore', ctrl.restorePatient);
 patientsRouter.get('/:id/appointments', ctrl.getPatientAppointments);
