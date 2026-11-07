@@ -1,0 +1,2637 @@
+{
+  "name": "Dental — AI Receptionist",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dental/inbound",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "4986fcf6-dea1-4d0e-9b14-80a59ed66639",
+      "name": "Inbound Message",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        16,
+        544
+      ],
+      "webhookId": "86e2342f-ae44-4068-bf4a-19e28bc2094f"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "meta",
+              "leftValue": "={{ $json.body?.object === \"whatsapp_business_account\" || !!$json.headers?.[\"x-hub-signature-256\"] || $json.body?.provider === \"meta_whatsapp\" }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a01a7fde-2cf6-48e1-a786-235c0b403a98",
+      "name": "Is Meta Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        304,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "binaryData": true,
+        "dataPropertyName": "computed_signature"
+      },
+      "id": "dd6f2540-b732-4a00-bcfd-26d309372a50",
+      "name": "Compute Meta Signature",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        544,
+        400
+      ],
+      "credentials": {
+        "crypto": {
+          "id": "mlHBtUooMvwzTPEV",
+          "name": "Crypto account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inbound = $('Inbound Message').first().json;\nconst header = String((inbound.headers ?? {})['x-hub-signature-256'] ?? '');\nconst computed = String($json.computed_signature ?? '');\nconst expected = computed ? 'sha256=' + computed.toLowerCase() : '';\nconst got = header.trim().toLowerCase();\nlet diff = (expected.length === got.length && expected.length === 71) ? 0 : 1;\nfor (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ (got.charCodeAt(i) || 0);\nconst isMetaPayload = (inbound.body ?? {}).object === 'whatsapp_business_account';\nreturn [{ json: { signature_valid: diff === 0 && isMetaPayload } }];"
+      },
+      "id": "9454e5dd-b511-4d36-a70e-3901d2d76534",
+      "name": "Check Meta Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "sig",
+              "leftValue": "={{ $json.signature_valid === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ef1804c6-a2c9-49b6-9f08-f4b74bba1e93",
+      "name": "Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        992,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "pnid",
+              "leftValue": "={{ String($(\"Inbound Message\").first().json.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? \"\").trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cf5aa449-f695-48c7-803c-c1e4c3a06025",
+      "name": "Has Phone Number ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        864,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT CASE\n         WHEN count(*) = 1 THEN (array_agg(c.id))[1]::text\n       END AS clinic_id\nFROM api.clinic_whatsapp_integrations i\nJOIN api.clinics c ON c.id = i.clinic_id\nWHERE $1 <> ''\n  AND i.phone_number_id = $1\n  AND i.enabled\n  AND c.active\n  AND c.suspended_at IS NULL;",
+        "options": {
+          "queryReplacement": "={{ String($(\"Inbound Message\").first().json.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? \"\") }}"
+        }
+      },
+      "id": "e3d707cd-6019-4606-81cc-187dcfc5c6f8",
+      "name": "Resolve Meta Clinic",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1264,
+        704
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inbound = $('Inbound Message').first().json;\nconst b = inbound.body ?? {};\n// Non-Meta requests (canonical body) pass through unchanged.\nif (b.object !== 'whatsapp_business_account') {\n  return [{ json: inbound }];\n}\n\nconst clinicId = String($json.clinic_id ?? '');\nconst entry = Array.isArray(b.entry) ? b.entry[0] : null;\nconst change = entry && Array.isArray(entry.changes) ? entry.changes[0] : null;\nconst value = change && change.field === 'messages' ? change.value : null;\nconst msg = value && value.messaging_product === 'whatsapp' && Array.isArray(value.messages) ? value.messages[0] : null;\nconst isText = !!msg && msg.type === 'text' && !!msg.text && typeof msg.text.body === 'string' && msg.text.body.trim().length > 0;\n\nconst from = msg && typeof msg.from === 'string' ? msg.from.trim() : '';\nconst contacts = value && Array.isArray(value.contacts) ? value.contacts : [];\nconst contact = contacts.find(c => c && c.wa_id === from) ?? contacts[0] ?? null;\nconst profileName = contact && contact.profile && typeof contact.profile.name === 'string' ? contact.profile.name : '';\n\n// Invalid or unsupported Meta payloads produce empty required fields, which\n// Validate & Normalize rejects (input_valid=false -> Respond Invalid Input).\nconst valid = isText && !!from && !!msg.id && !!clinicId;\nconst canonical = {\n  clinic_id: valid ? clinicId : '',\n  channel: 'whatsapp',\n  channel_conversation_id: valid ? from : '',\n  whatsapp_id: valid ? from : '',\n  phone: valid ? from : '',\n  patient_name: valid ? profileName : '',\n  message: valid ? msg.text.body : '',\n  provider: 'meta_whatsapp',\n  provider_event_id: valid ? String(msg.id) : '',\n  payload: b,\n};\nif (!valid) delete canonical.provider_event_id;\n\nreturn [{ json: { headers: inbound.headers, params: inbound.params, query: inbound.query, body: canonical } }];"
+      },
+      "id": "9d461b63-e62f-4e84-90ac-8e4d232f0b8e",
+      "name": "Meta WhatsApp Adapter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $json.body ?? {};\nconst uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Structural validity (request shape). Failures here get a generic controlled\n// response -- never a thrown exception, never internal detail.\nconst structural = [];\nif (!b.clinic_id || !uuid.test(String(b.clinic_id))) structural.push('clinic_id');\nconst channels = ['whatsapp', 'web_chat', 'voice', 'manual'];\nconst channel = b.channel ?? 'whatsapp';\nif (!channels.includes(channel)) structural.push('channel');\nconst message = typeof b.message === 'string' ? b.message.trim() : '';\nif (!message) structural.push('message');\n\n// Conversation key: first non-empty identifier; a missing key is NOT fatal --\n// the contact gate below handles it with a clarification.\nconst convKeyRaw = [b.channel_conversation_id, b.whatsapp_id, b.phone, b.email]\n  .map(x => (typeof x === 'string' ? x.trim() : x))\n  .find(x => x);\nconst convKey = convKeyRaw ?? ('anon-' + Date.now());\n\n// Contact readiness (patient identity). Failures here route to a receptionist\n// clarification BEFORE any patient/conversation database write.\nconst name = typeof b.patient_name === 'string' ? b.patient_name.trim() : '';\nconst has_name = !!name;\n\nconst phoneRaw = typeof b.phone === 'string' ? b.phone.trim() : '';\n// International-friendly: strip common separators, then optional + and 7-15 digits.\n// NOTE: no backslash escapes in this regex -- they are mangled on deployment.\nconst phoneDigits = phoneRaw.replace(/[ ().-]/g, '');\nconst phone_valid = !!phoneRaw && /^[+]?[0-9]{7,15}$/.test(phoneDigits);\nconst whatsappId = typeof b.whatsapp_id === 'string' && b.whatsapp_id.trim() ? b.whatsapp_id.trim() : '';\nconst emailRaw = typeof b.email === 'string' ? b.email.trim() : '';\nconst has_contact = phone_valid || !!whatsappId || !!emailRaw;\n\nconst contact_ready = has_name && has_contact;\nlet contact_ask = null;\nif (!has_name) {\n  contact_ask = \"Sure — what's your name?\";\n} else if (phoneRaw && !phone_valid) {\n  contact_ask = 'Could you provide a valid phone number so we can reach you about the appointment?';\n} else if (!has_contact) {\n  contact_ask = \"Sure — what's the best phone number to reach you on?\";\n}\n\nconst eventId = b.provider_event_id ?? (channel + ':' + convKey + ':' + (b.message_id ?? Date.now()));\nconst payloadB64 = Buffer.from(JSON.stringify(b), 'utf8').toString('base64');\nreturn [{ json: {\n  clinic_id: String(b.clinic_id ?? ''),\n  channel,\n  channel_conversation_id: String(convKey),\n  patient_name: name,\n  phone: phoneRaw || null,\n  email: b.email ?? null,\n  whatsapp_id: b.whatsapp_id ?? null,\n  message,\n  provider_event_id: String(eventId),\n  provider: b.provider ?? 'adapter',\n  payload: b,\n  input_valid: structural.length === 0,\n  contact_ready,\n  contact_ask,\n  payload_b64: payloadB64,\n  msg_b64: Buffer.from(message, 'utf8').toString('base64'),\n  pack_event: Buffer.from([String(b.clinic_id ?? ''), b.provider ?? 'adapter', String(eventId), message.split('|').join(' '), payloadB64].join('|'), 'utf8').toString('base64'),\n  pack_patient: Buffer.from([String(b.clinic_id ?? ''), name.split('|').join(' '), phoneRaw, b.email ?? '', b.whatsapp_id ?? ''].join('|'), 'utf8').toString('base64'),\n} }];"
+      },
+      "id": "c7254d31-141b-4a90-9cf1-21ce18c39d94",
+      "name": "Validate & Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.input_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "id": "20921cfd-3606-4791-8228-8f1c0fd338dd"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9689c222-39d5-4514-b2c4-9070b6b2a038",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1888,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT CASE WHEN EXISTS (SELECT 1 FROM api.clinics WHERE id = $1::uuid AND active AND suspended_at IS NULL) THEN api.get_clinic_context($1::uuid) ELSE jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'clinic not found') END AS fn",
+        "options": {
+          "queryReplacement": "={{ $json.clinic_id }}"
+        }
+      },
+      "id": "3368c5d4-7df7-4b74-b8a3-60e34d1ad2cf",
+      "name": "Clinic Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2112,
+        816
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.fn ?? $json)?.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "354073b9-311e-45f9-afd8-8b200826453e",
+      "name": "Clinic Known?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2336,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (SELECT string_to_array(convert_from(decode($1,'base64'),'UTF8'), '|') AS v)\nSELECT api.register_inbound_event(v[1]::uuid, v[2], 'message', v[3], encode(digest(v[4],'sha256'),'hex'), convert_from(decode(v[5],'base64'),'UTF8')::jsonb) AS fn FROM a",
+        "options": {
+          "queryReplacement": "={{ $(\"Validate & Normalize\").first().json.pack_event }}"
+        }
+      },
+      "id": "a313dba5-7953-4750-89a8-8cc420142f6a",
+      "name": "Register Inbound Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2208,
+        704
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? $json;\nconst v = $('Validate & Normalize').first().json;\nconst d = r?.data ?? {};\nif (d.duplicate && d.state !== 'failed') {\n  return [{ json: { ...v, event_id: d.event_id, duplicate: true } }];\n}\nif (!r || r.ok !== true || !d.event_id) throw new Error((r?.code ?? 'DB_FAILURE') + ': ' + (r?.message ?? 'event registration failed'));\nreturn [{ json: { ...v, event_id: d.event_id, duplicate: false } }];"
+      },
+      "id": "2f4eb828-94ac-4864-ac35-a34f60277271",
+      "name": "Duplicate Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2432,
+        704
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "3d5e076e-7cfa-4b19-b9b3-7a8081d1b6ce",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2880,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, code: \"OK\", duplicate: true } }}",
+        "options": {}
+      },
+      "id": "c0df752c-c0cb-4f33-97ca-a43d0c546ef3",
+      "name": "Respond Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2480,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Validate & Normalize\").first().json.contact_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "eff30295-9f34-41d4-8e34-3172ee61980a",
+      "name": "Contact Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2480,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (SELECT string_to_array(convert_from(decode($1,'base64'),'UTF8'),'|') v) SELECT api.find_or_create_patient(a.v[1]::uuid, a.v[2], NULLIF(a.v[3],''), NULLIF(a.v[4],''), NULLIF(a.v[5],'')) AS fn FROM a",
+        "options": {
+          "queryReplacement": "={{ $(\"Validate & Normalize\").first().json.pack_patient }}"
+        }
+      },
+      "id": "af1315a3-e15c-4d92-8ce4-eeef59ba94af",
+      "name": "Find Patient",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2704,
+        1104
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? $json;\nif (r.ok === false) {\n  return [{ json: { ok: false, code: r.code ?? 'VALIDATION', message: r.message ?? 'patient record failed' } }];\n}\nconst d = r.data ?? {};\nreturn [{ json: { ok: true, patient_id: d.patient_id ?? d.id ?? null } }];"
+      },
+      "id": "f06ab6c0-cee7-4488-82bd-0e99ad547393",
+      "name": "F Find Patient",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2928,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ok === true && !!$json.patient_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "2c31d24d-5dd6-4712-8d06-2dfa12199582",
+      "name": "Patient Ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3152,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (SELECT string_to_array($1,'|') v) SELECT api.get_or_create_conversation(a.v[1]::uuid, a.v[2]::api.channel_type, a.v[3], NULLIF(a.v[4],'')::uuid) AS fn FROM a",
+        "options": {
+          "queryReplacement": "={{ [$(\"Validate & Normalize\").first().json.clinic_id, $(\"Validate & Normalize\").first().json.channel, $(\"Validate & Normalize\").first().json.channel_conversation_id, $json.patient_id ?? \"\"].join(\"|\") }}"
+        }
+      },
+      "id": "6503206e-f520-4625-9fc3-7ab8096c91a7",
+      "name": "Get Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3008,
+        704
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO api.messages (clinic_id, conversation_id, direction, kind, body, provider_message_id)\nVALUES ($1::uuid, $2::uuid, 'inbound', 'patient_text', convert_from(decode($3,'base64'),'UTF8'), $4)\nON CONFLICT (conversation_id, provider_message_id) DO NOTHING\nRETURNING id",
+        "options": {
+          "queryReplacement": "={{ [$(\"Validate & Normalize\").first().json.clinic_id, ($json.fn?.data?.conversation_id ?? $json.fn?.conversation_id), $(\"Validate & Normalize\").first().json.msg_b64, $(\"Validate & Normalize\").first().json.provider_event_id].join(\",\") }}"
+        }
+      },
+      "id": "11b32d55-a0e4-4862-89ba-994ce9052da1",
+      "name": "Log Inbound Message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3232,
+        704
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3.1-flash-lite",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ JSON.stringify({ patient_message: $(\"Validate & Normalize\").first().json.message }) }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {
+          "systemMessage": "You are the semantic language-understanding layer of a dental clinic receptionist.\nYou ONLY classify what the patient means and extract entities literally present in their message.\nYou never decide whether an appointment exists, whether a time is available, valid, in the past or within opening hours, what the clinic offers, costs, or its policies. Other systems do that.\n\nReturn ONLY one JSON object. No markdown, no code fences, no prose.\n\nAllowed values for \"intent\" (use exactly one, never invent others):\ngreeting, goodbye, thanks, handoff, faq_services, faq_service_information, faq_pricing, faq_dentists, faq_hours, faq_location, faq_new_patient, faq_preparation, faq_insurance, faq_payment, faq_emergency, faq_cancellation_policy, faq_reschedule_policy, faq_reminders, faq_confirmation_code, faq_booking_process, check_availability, book_appointment, lookup_appointment, cancel_appointment, reschedule_appointment, unclear\n\nRules:\n- Classify by the patient's ACTUAL request, not by keywords.\n- A confirmation code in the message does NOT mean faq_confirmation_code. faq_confirmation_code is only for questions about what a confirmation code is or what it is used for. If the patient asks about their own appointment (when, what day, details, status, is it still booked/confirmed, find/check/verify it, they forgot when it is) it is lookup_appointment, with or without a code.\n- Existing appointment + request to retrieve/check/verify/see status or details = lookup_appointment. Only an explicit request to create a NEW appointment is book_appointment. A polite booking request in question form (\"Can I book a cleaning tomorrow at 10 AM?\") is book_appointment.\n- Asking which times/openings exist = check_availability. Choosing or requesting a specific slot to be booked = book_appointment.\n- reschedule_appointment only when the patient asks to move/change an existing appointment. cancel_appointment only when the patient asks to cancel their appointment.\n- Questions about how cancellation or rescheduling works, or about the policy = faq_cancellation_policy / faq_reschedule_policy, never an action. \"How do I book?\" = faq_booking_process.\n- faq_new_patient: first visit / being a new patient (including what to bring to a first appointment). faq_preparation: general preparation or what to bring, not specific to being new. faq_pricing: cost/price. faq_payment: payment methods. faq_insurance: insurance. faq_dentists: which dentists work there or whether a dentist works there. faq_hours: opening hours or open on a day. faq_location: address/where. faq_reminders: appointment reminders. faq_emergency: dental emergencies. faq_services: what services are offered. faq_service_information: details about one specific service.\n- handoff only when the patient asks to speak with a human, staff member or receptionist.\n- greeting/goodbye/thanks only when the message contains nothing else. In mixed messages the actionable or informational request is the intent and you set greeting/goodbye flags instead.\n- If the message is ambiguous, off-topic, or you are not confident, use \"unclear\" with a low confidence. Never guess an action.\n\nExtraction rules (use null when absent, never invent):\n- confirmation_code: the code exactly as written (e.g. \"9SVD-ZW13\").\n- service: the service words the patient used, e.g. \"cleaning\", \"checkup\", \"filling\", \"root canal\".\n- dentist: the dentist name as written, e.g. \"Dr. Smith\". Never substitute a different dentist.\n- date_text / time_text: the literal date or time expression (\"tomorrow\", \"next Monday\", \"October 20\", \"tomorrow morning\", \"next week\", \"2 PM\"). date / time: only if written in ISO form, otherwise null. Do not judge validity.\n- patient_name: only if the patient states their name. reason: short reason given by the patient, else null.\n\nOutput schema (all keys required):\n{\"intent\": string, \"confidence\": number 0-1, \"confirmation_code\": string|null, \"service\": string|null, \"dentist\": string|null, \"date_text\": string|null, \"time_text\": string|null, \"date\": string|null, \"time\": string|null, \"patient_name\": string|null, \"reason\": string|null, \"greeting\": boolean, \"goodbye\": boolean, \"is_question\": boolean, \"is_action_request\": boolean, \"is_policy_question\": boolean}",
+          "maxOutputTokens": 1024,
+          "temperature": 0
+        }
+      },
+      "id": "0da80bda-a5ab-4aa4-9758-03e10ca4d56e",
+      "name": "Semantic Intent",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        3824,
+        1488
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const v = $('Validate & Normalize').first().json;\nconst dup = $('Duplicate Guard').first().json;\n\nconst pat = ($('Find Patient').first().json.fn ?? {})?.data ?? {};\nconst conv = ($('Get Conversation').first().json.fn ?? {})?.data ?? {};\n\nconst message = v.message;\nconst text = message.toLowerCase();\nconst has = (...ws) => ws.some(w => text.includes(w));\n\n// ------------------------------------------------------------------\n// Date / time extraction (systemic).\n// Produces: resolvedDate (YYYY-MM-DD or null), startsAt (local ISO,\n// refined to UTC in Resolve Slots), timePeriod, dateInvalid, datePast,\n// dateKnown, timeKnown.\n// NOTE: this jsCode is deployed through a template literal, so regexes\n// must NOT use single-backslash escapes (\\b/\\d get mangled). Use\n// double backslashes inside this .ts source only where the deployed\n// regex truly needs them; prefer literal characters otherwise.\n// ------------------------------------------------------------------\n\nconst MONTH_IDX = {\n  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,\n  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,\n  jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9,\n  oct: 10, nov: 11, dec: 12,\n};\nconst DAY_IDX = {\n  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5,\n  saturday: 6, sun: 0, mon: 1, tue: 2, tues: 2, wed: 3, thu: 4, thur: 4,\n  thurs: 4, fri: 5, sat: 6,\n};\n\nfunction pad2(n) { return String(n).padStart(2, '0'); }\nfunction ymd(y, m, d) { return y + '-' + pad2(m) + '-' + pad2(d); }\nfunction validDate(y, m, d) {\n  if (m < 1 || m > 12 || d < 1 || d > 31) return false;\n  const dt = new Date(Date.UTC(y, m - 1, d, 12));\n  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;\n}\nfunction weekdayOf(dateStr) {\n  const y = Number(dateStr.slice(0, 4)), m = Number(dateStr.slice(5, 7)), d = Number(dateStr.slice(8, 10));\n  return new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay();\n}\n\n// Date words are resolved on a clinic-agnostic UTC reference day. The\n// reference and the clinic timezone differ by at most one calendar day\n// (UTC+-12); that edge is caught by the past-date checks in Resolve Slots,\n// which run in the real clinic timezone from the database. No clinic data\n// is hardcoded here -- the authoritative timezone comes from Clinic Context.\nconst clinicTimezone = 'UTC';\nfunction clinicTodayStr() {\n  const parts = new Intl.DateTimeFormat('en-CA', {\n    timeZone: clinicTimezone, year: 'numeric', month: '2-digit', day: '2-digit',\n  }).formatToParts(new Date());\n  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));\n  return p.year + '-' + p.month + '-' + p.day;\n}\nconst todayStr = clinicTodayStr();\nfunction addDays(dateStr, n) {\n  const y = Number(dateStr.slice(0, 4)), m = Number(dateStr.slice(5, 7)), d = Number(dateStr.slice(8, 10));\n  const dt = new Date(Date.UTC(y, m - 1, d + n, 12));\n  return ymd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());\n}\nfunction diffDays(a, b) {\n  const pa = a.split('-').map(Number), pb = b.split('-').map(Number);\n  return Math.round((Date.UTC(pa[0], pa[1] - 1, pa[2]) - Date.UTC(pb[0], pb[1] - 1, pb[2])) / 86400000);\n}\n\nlet resolvedDate = null;\nlet dateInvalid = false;\nlet dateKnown = false;\nlet weekHintDays = null; // 'next week' / 'in two weeks' without a weekday\n// Explicit calendar date present (ISO, month-name, day-month or slash form).\n// When true, a standalone weekday must NEVER replace the explicit date.\nlet explicitDate = false;\n\n// ISO timestamp or ISO date\nconst iso = message.match(\n  /\\d{4}-\\d{2}-\\d{2}[t ]\\d{2}:\\d{2}(?::\\d{2})?(?:\\.\\d+)?(?:z|[+-]\\d{2}:?\\d{2})?/i\n);\nconst dateOnly = message.match(/\\b\\d{4}-\\d{2}-\\d{2}\\b/);\nif (dateOnly) {\n  const yy = Number(dateOnly[0].slice(0, 4)), mm = Number(dateOnly[0].slice(5, 7)), dd = Number(dateOnly[0].slice(8, 10));\n  explicitDate = true;\n  if (validDate(yy, mm, dd)) { resolvedDate = dateOnly[0]; dateKnown = true; }\n  else dateInvalid = true;\n}\n\n// Month-name dates: 'October 20th', '20 October', optional year\nconst monthNameRe = /(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)/i;\n// Month name followed by the day with OR without whitespace ('Oct20', 'Oct 20',\n// 'October20th', 'Oct20, 2026'). Boundary guards stop matches inside words or\n// confirmation codes (e.g. 'DEC5-AB12', 'AB12-OCT2'). No backslash escapes.\nconst mdRe = /(?<![A-Za-z0-9-])(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec) *([0-9]{1,2})(?![0-9])(?:st|nd|rd|th)?(?![A-Za-z0-9]|-[A-Za-z0-9]{4,10})(?:,? +([0-9]{4}))?/i;\nconst dmRe = /([0-9]{1,2})(?:st|nd|rd|th)? +(of +)?(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,? +([0-9]{4}))?/i;\nconst slashRe = /\\b([0-9]{1,2})[\\/]([0-9]{1,2})(?:[\\/]([0-9]{2,4}))?\\b/;\nif (!resolvedDate && !dateInvalid) {\n  let y, m, d;\n  const md = message.match(mdRe);\n  const dm = message.match(dmRe);\n  const sl = message.match(slashRe);\n  if (md) {\n    m = MONTH_IDX[md[1].toLowerCase()]; d = Number(md[2]); y = md[3] ? Number(md[3]) : null;\n  } else if (dm) {\n    d = Number(dm[1]); m = MONTH_IDX[dm[3].toLowerCase()]; y = dm[4] ? Number(dm[4]) : null;\n  } else if (sl) {\n    m = Number(sl[1]); d = Number(sl[2]);\n    y = sl[3] ? (sl[3].length === 2 ? 2000 + Number(sl[3]) : Number(sl[3])) : null;\n  }\n  if (m !== undefined) {\n    explicitDate = true;\n    const ty = Number(todayStr.slice(0, 4));\n    if (y === null) {\n      y = ty;\n      if (validDate(y, m, d) && ymd(y, m, d) < todayStr) y = ty + 1; // next occurrence\n    }\n    if (!validDate(y, m, d)) dateInvalid = true;\n    else { resolvedDate = ymd(y, m, d); dateKnown = true; }\n  }\n}\n\n// Relative words\nif (!resolvedDate && !dateInvalid) {\n  if (/today/i.test(message)) { resolvedDate = todayStr; dateKnown = true; }\n  else if (/tomorrow/i.test(message)) { resolvedDate = addDays(todayStr, 1); dateKnown = true; }\n}\n\n// Weekday references: 'next Monday', 'this Friday', bare 'Friday'.\n// Only used when NO explicit calendar date exists ('Tuesday Oct20' -> Oct 20).\nif (!explicitDate && !resolvedDate && !dateInvalid) {\n  const wRe = /(next|this|coming)? *(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)/i;\n  const w = message.match(wRe);\n  if (w && w[2]) {\n    const target = DAY_IDX[w[2].toLowerCase()];\n    const cur = weekdayOf(todayStr);\n    const ahead = (target - cur + 7) % 7 || 7;\n    if (w[1] && w[1].toLowerCase() === 'next') resolvedDate = addDays(todayStr, ahead + 7);\n    else resolvedDate = addDays(todayStr, ahead);\n    dateKnown = true;\n  }\n}\n\n// Week-level hints without a day\nif (!resolvedDate && !dateInvalid) {\n  if (/next week/i.test(message)) { weekHintDays = 7; dateKnown = true; }\n  else if (/(in )?two weeks|in a (couple|few) of weeks/i.test(message)) { weekHintDays = 14; dateKnown = true; }\n}\n\nlet datePast = false;\nif (resolvedDate && resolvedDate < todayStr) datePast = true;\n\n// Time of day\nconst timeMatch = message.match(\n  /\\b(?:at +)?(1[0-2]|0?[1-9])(?::([0-5][0-9]))? *(a.?m.?|p.?m.?)\\b|\\b(?:at +)?([01]?[0-9]|2[0-3]):([0-5][0-9])\\b/i\n);\nlet localHour = null;\nlet localMinute = null;\nlet timeKnown = false;\nif (iso) {\n  const hm = iso[0].match(/[t ](\\d{2}):(\\d{2})/i);\n  if (hm) { localHour = Number(hm[1]); localMinute = Number(hm[2]); timeKnown = true; }\n} else if (timeMatch) {\n  if (timeMatch[1] !== undefined) {\n    localHour = Number(timeMatch[1]);\n    localMinute = Number(timeMatch[2] ?? 0);\n    const meridiem = timeMatch[3].replace(/\\./g, '').toLowerCase();\n    if (meridiem === 'pm' && localHour !== 12) localHour += 12;\n    if (meridiem === 'am' && localHour === 12) localHour = 0;\n    timeKnown = true;\n  } else {\n    localHour = Number(timeMatch[4]);\n    localMinute = Number(timeMatch[5]);\n    timeKnown = true;\n  }\n}\n\nlet timePeriod = null;\nif (/\\bmorning\\b/i.test(message)) timePeriod = 'morning';\nelse if (/\\bafternoon\\b/i.test(message)) timePeriod = 'afternoon';\nelse if (/\\bevening\\b/i.test(message)) timePeriod = 'evening';\nelse if (/\\bnight\\b/i.test(message)) timePeriod = 'night';\n\n// 'this afternoon/evening/morning' pins the date to today even without the word 'today'\nif (!resolvedDate && !dateInvalid && /this +(morning|afternoon|evening)/i.test(message)) {\n  resolvedDate = todayStr;\n  dateKnown = true;\n}\n\n// A bare '4:15 PM' without a date means the same day the user is talking about;\n// if the time has already passed today and no date words exist, leave the date\n// unset so the patient can be asked rather than guessing.\nlet startsAt = null;\nif (resolvedDate && timeKnown && localHour !== null) {\n  startsAt = resolvedDate + 'T' + pad2(localHour) + ':' + pad2(localMinute) + ':00';\n} else if (iso && timeKnown) {\n  startsAt = resolvedDate + 'T' + pad2(localHour) + ':' + pad2(localMinute) + ':00';\n}\n\n// Past-time detection for a today date (uses clinic-local current time)\nlet timePast = false;\nif (resolvedDate === todayStr && timeKnown && localHour !== null) {\n  const nowParts = new Intl.DateTimeFormat('en-US', {\n    timeZone: clinicTimezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',\n  }).formatToParts(new Date());\n  const np = Object.fromEntries(nowParts.map(x => [x.type, x.value]));\n  const nowH = Number(np.hour), nowM = Number(np.minute);\n  if (localHour < nowH || (localHour === nowH && localMinute <= nowM)) timePast = true;\n}\n\n// ------------------------------------------------------------------\n// Structured time constraint (deterministic, parsed from the patient's\n// own message -- Gemini time_text is never used for this).\n// slots.time_constraint = {\n//   type: 'exact' | 'after' | 'before' | 'at_or_after' | 'at_or_before'\n//         | 'around' | 'range',\n//   time: 'HH:mm' (clinic-local, 24h; range start),\n//   end_time: 'HH:mm' | null (range end only)\n// }\n// Downstream comparisons use the slot START time in clinic-local time:\n// after: > time; at_or_after: >= time; before: < time;\n// at_or_before: <= time; range: >= time and < end_time;\n// exact/around: existing exact-match + nearest-alternative behavior.\n// ------------------------------------------------------------------\nlet timeConstraint = null;\nfunction tcHM(h, m) { return pad2(h) + ':' + pad2(m); }\nfunction tcMer(h, mer) {\n  let hh = Number(h);\n  if (mer) {\n    const x = mer.replace(/[.]/g, '').toLowerCase();\n    if (x === 'pm' && hh !== 12) hh += 12;\n    if (x === 'am' && hh === 12) hh = 0;\n  }\n  return hh;\n}\nif (iso && timeKnown && localHour !== null) {\n  timeConstraint = { type: 'exact', time: tcHM(localHour, localMinute), end_time: null };\n} else {\n  const lower = message.toLowerCase();\n  const rangeRe = /(?:^|[^a-z])(?:between|from) +([01]?[0-9]|2[0-3])(?::([0-5][0-9]))? *([ap][.]?m[.]?)?(?![a-z0-9]) *(?:and|to|until|till|through|-) *([01]?[0-9]|2[0-3])(?::([0-5][0-9]))? *([ap][.]?m[.]?)?(?![a-z0-9])/;\n  const rm = lower.match(rangeRe);\n  let rangeDone = false;\n  if (rm && (rm[2] || rm[3] || rm[5] || rm[6])) {\n    const mer1 = rm[3] || null, mer2 = rm[6] || null;\n    const h1raw = Number(rm[1]), h2raw = Number(rm[4]);\n    const okH = (h, mer) => mer ? (h >= 1 && h <= 12) : true;\n    if (okH(h1raw, mer1) && okH(h2raw, mer2)) {\n      const m1 = Number(rm[2] ?? 0), m2 = Number(rm[5] ?? 0);\n      const e = tcMer(h2raw, mer2);\n      let s = tcMer(h1raw, mer1 || (h1raw <= 12 ? mer2 : null));\n      if (!mer1 && mer2 && h1raw <= 12 && s * 60 + m1 >= e * 60 + m2) {\n        // '11 to 1 PM' -> first time is AM\n        s = tcMer(h1raw, 'am');\n      }\n      if (s * 60 + m1 < e * 60 + m2) {\n        timeConstraint = { type: 'range', time: tcHM(s, m1), end_time: tcHM(e, m2) };\n        rangeDone = true;\n      }\n    }\n  }\n  if (!rangeDone) {\n    const tokRe = /(?<![0-9a-z:])(1[0-2]|0?[1-9])(?::([0-5][0-9]))? *([ap][.]?m[.]?)(?![a-z0-9])|(?<![0-9a-z:])([01]?[0-9]|2[0-3]):([0-5][0-9])(?![0-9a-z])/;\n    const tm = lower.match(tokRe);\n    if (tm) {\n      let th, tmin;\n      if (tm[1] !== undefined) { th = tcMer(tm[1], tm[3]); tmin = Number(tm[2] ?? 0); }\n      else { th = Number(tm[4]); tmin = Number(tm[5]); }\n      const pre = lower.slice(0, tm.index).replace(/ +$/, '');\n      const post = lower.slice(tm.index + tm[0].length);\n      let type = 'exact';\n      if (/(?:^|[^a-z])(?:no|not) +later +than$/.test(pre)) type = 'at_or_before';\n      else if (/(?:^|[^a-z])(?:no|not) +earlier +than$/.test(pre)) type = 'at_or_after';\n      else if (/(?:^|[^a-z])any *time +(?:after|from)$/.test(pre)) type = 'at_or_after';\n      else if (/(?:^|[^a-z])(?:after|later +than)$/.test(pre)) type = 'after';\n      else if (/(?:^|[^a-z])(?:before|earlier +than)$/.test(pre)) type = 'before';\n      else if (/(?:^|[^a-z])by$/.test(pre)) type = 'at_or_before';\n      else if (/(?:^|[^a-z])(?:around|about|approximately|roughly)$/.test(pre)) type = 'around';\n      else if (/(?:^|[^a-z])(?:from|starting|starting +(?:at|from))$/.test(pre)) type = 'at_or_after';\n      if (type === 'exact' || type === 'at_or_after') {\n        if (/^ *(?:or +later|or +after|and +later|onwards?|on *(?:$|[.,!?;]))/.test(post)) type = 'at_or_after';\n        else if (/^ *(?:or +earlier|or +before|and +earlier)/.test(post)) type = 'at_or_before';\n      }\n      timeConstraint = { type, time: tcHM(th, tmin), end_time: null };\n    }\n  }\n}\n\n\n// ------------------------------------------------------------------\n// Confirmation code / appointment uuid extraction\n// ------------------------------------------------------------------\nconst code = message.match(/[A-Z0-9]{4,10}-[A-Z0-9]{4,10}/i);\nif (code) code[0] = code[0].toUpperCase();\nconst uuidRe =\n  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;\nconst apptUuid = message.match(uuidRe);\n\n// ------------------------------------------------------------------\n// Dentist mention (generic Dr.-name capture; resolved against the\n// current clinic's catalog in Resolve Slots -- never hardcoded)\n// ------------------------------------------------------------------\nlet dentistRequested = null;\nconst drMatch = message.match(/(?:dr.?|doctor) +([a-z]+)/i);\nif (drMatch) {\n  const nm = drMatch[1].toLowerCase();\n  const stop = ['who', 'is', 'are', 'there', 'available', 'what', 'which', 'the', 'a', 'an', 'on', 'at', 'in', 'will', 'can', 'does', 'do', 'my', 'your', 'their', 'his', 'her'];\n  if (!stop.includes(nm)) dentistRequested = nm;\n}\n\n// --------------------------------------------------\n// Canonical service normalization (single source of truth).\n// Supported values are exactly: checkup | cleaning | filling.\n// Anything recognized but unsupported -> 'unsupported'.\n// Booking phrasing with no recognizable service -> 'missing'.\n// --------------------------------------------------\nlet service = null;\nlet serviceStatus = 'missing';\n\n// NOTE: no s escapes here -- whitespace is matched with a literal space,\n// because backslash escapes in this jsCode are stripped on deployment.\nconst unsupportedServiceRe = /root canals?|extractions?|wisdom teeth|wisdom tooth|teeth pulled|tooth pulled|pull (a )?(tooth|teeth)|braces|orthodont|implants?|crowns?|veneers?|whitening|bleaching|dentures?|caps?/i;\n\nif (unsupportedServiceRe.test(message)) {\n  serviceStatus = 'unsupported';\n} else if (/check ?-? ?up|routine (dental )?(check|exam)|dental exams?|examinations?|exams?/i.test(message)) {\n  service = 'checkup';\n  serviceStatus = 'ok';\n} else if (/clean/i.test(message)) {\n  service = 'cleaning';\n  serviceStatus = 'ok';\n} else if (/fill|cavit/i.test(message)) {\n  service = 'filling';\n  serviceStatus = 'ok';\n}\n\n// ------------------------------------------------------------------\n// Semantic intent (Gemini). Gemini ONLY classifies meaning and extracts\n// literal entities. This block validates its output against a closed\n// taxonomy; malformed, missing, low-confidence or contradictory output\n// becomes 'clarify' (unclear) -- never an action. Deterministic date/time,\n// code, dentist and service extraction above stay authoritative; Gemini\n// values are used only as a fallback when they literally appear in the\n// patient message. Resolve Slots + PostgreSQL still decide all truth.\n// ------------------------------------------------------------------\nconst GEMINI_TO_INTERNAL = {\n  greeting: 'greeting', goodbye: 'goodbye', thanks: 'thanks', handoff: 'handoff',\n  faq_services: 'faq_services', faq_service_information: 'faq_service_information',\n  faq_pricing: 'faq_pricing', faq_dentists: 'faq_dentists', faq_hours: 'faq_hours',\n  faq_location: 'faq_location', faq_new_patient: 'faq_new_patient',\n  faq_preparation: 'faq_preparation', faq_insurance: 'faq_insurance',\n  faq_payment: 'faq_payment', faq_emergency: 'faq_emergency',\n  faq_cancellation_policy: 'faq_cancellation_policy',\n  faq_reschedule_policy: 'faq_reschedule_policy', faq_reminders: 'faq_reminders',\n  faq_confirmation_code: 'faq_confirmation_code', faq_booking_process: 'faq_booking_process',\n  check_availability: 'availability', book_appointment: 'book',\n  lookup_appointment: 'lookup', cancel_appointment: 'cancel',\n  reschedule_appointment: 'reschedule', unclear: 'clarify',\n};\nconst ACTION_INTENTS = ['availability', 'book', 'lookup', 'cancel', 'reschedule'];\nconst MIN_CONF_ACTION = 0.6;\nconst MIN_CONF_INFO = 0.5;\nconst FENCE = String.fromCharCode(96).repeat(3);\n\nfunction parseSemantic(raw) {\n  try {\n    if (!raw || typeof raw !== 'object') return null;\n    if (raw.error) return null;\n    if (typeof raw.intent === 'string') return raw;\n    let txt = null;\n    const parts = raw.content && Array.isArray(raw.content.parts) ? raw.content.parts : null;\n    if (parts) txt = parts.map(p => (p && typeof p.text === 'string') ? p.text : '').join('');\n    if (!txt && typeof raw.text === 'string') txt = raw.text;\n    if (!txt && typeof raw.output === 'string') txt = raw.output;\n    if (!txt && raw.content && typeof raw.content === 'object' && typeof raw.content.intent === 'string') return raw.content;\n    if (!txt) return null;\n    txt = txt.split(FENCE + 'json').join('').split(FENCE).join('').trim();\n    const a = txt.indexOf('{');\n    const b = txt.lastIndexOf('}');\n    if (a < 0 || b <= a) return null;\n    const obj = JSON.parse(txt.slice(a, b + 1));\n    return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : null;\n  } catch (e) {\n    return null;\n  }\n}\n\nconst semRaw = $input.first() ? $input.first().json : null;\nconst sem = parseSemantic(semRaw);\nconst lowerMsg = message.toLowerCase();\nconst strOrNull = (x) => (typeof x === 'string' && x.trim() !== '' && x.trim().toLowerCase() !== 'null') ? x.trim() : null;\nconst inMessage = (x) => !!x && lowerMsg.includes(String(x).toLowerCase());\n\nlet intent = 'clarify';\nlet reason = '';\nlet semanticStatus = 'invalid';\nlet semanticIntent = null;\nlet semanticConfidence = null;\n\nif (sem) {\n  semanticIntent = typeof sem.intent === 'string' ? sem.intent.trim().toLowerCase() : null;\n  const confNum = Number(sem.confidence);\n  semanticConfidence = Number.isFinite(confNum) ? Math.max(0, Math.min(1, confNum)) : null;\n  const mapped = semanticIntent ? GEMINI_TO_INTERNAL[semanticIntent] : undefined;\n  if (!mapped) {\n    semanticStatus = 'unknown_intent';\n  } else {\n    const isAction = ACTION_INTENTS.includes(mapped);\n    const minConf = isAction ? MIN_CONF_ACTION : MIN_CONF_INFO;\n    if (semanticConfidence === null || semanticConfidence < minConf) {\n      semanticStatus = 'low_confidence';\n    } else if (isAction && sem.is_policy_question === true && sem.is_action_request !== true) {\n      // A pure policy question must never execute an action. An explicit\n      // action request in the same message takes precedence.\n      semanticStatus = 'policy_action_conflict';\n    } else {\n      intent = mapped;\n      semanticStatus = 'ok';\n    }\n  }\n}\n\nif (intent === 'handoff') reason = 'patient asked to speak with a human';\nelse if (intent === 'cancel') reason = 'patient asked to cancel';\nelse if (intent === 'reschedule') reason = 'patient asked to reschedule';\n\n// Entity fallbacks from Gemini (only when literally present in the message)\nlet codeValue = code ? code[0] : null;\nif (!codeValue && sem) {\n  const gc = strOrNull(sem.confirmation_code);\n  if (gc && /^[A-Z0-9]{4,10}-[A-Z0-9]{4,10}$/i.test(gc) && inMessage(gc)) codeValue = gc.toUpperCase();\n}\n\nif (!dentistRequested && sem) {\n  const gd = strOrNull(sem.dentist);\n  if (gd && inMessage(gd)) {\n    const words = gd.toLowerCase().replace(/doctor|dr[.]?/g, ' ').trim().split(/[^a-z]+/).filter(Boolean);\n    if (words.length) dentistRequested = words[words.length - 1];\n  }\n}\n\nif (serviceStatus === 'missing' && sem) {\n  const gs = strOrNull(sem.service);\n  if (gs && inMessage(gs)) {\n    if (unsupportedServiceRe.test(gs)) { serviceStatus = 'unsupported'; }\n    else if (/check ?-? ?up|exam/i.test(gs)) { service = 'checkup'; serviceStatus = 'ok'; }\n    else if (/clean/i.test(gs)) { service = 'cleaning'; serviceStatus = 'ok'; }\n    else if (/fill|cavit/i.test(gs)) { service = 'filling'; serviceStatus = 'ok'; }\n  }\n}\n\n// Greeting flag for mixed messages (primary intent still routes)\n// Pure social intent detection fallback (deterministic guard)\nconst pureGreetingRegex = /^(hi|hii+|hello|hey|heyy+|good morning|good afternoon|good evening|morning|afternoon|evening|greetings|hiya|howdy)[!.]*$/i;\nconst pureThanksRegex = /^(thanks|thank you|thx|thank you so much)[!.]*$/i;\nconst pureGoodbyeRegex = /^(bye|goodbye|see you|cya|have a good day)[!.]*$/i;\n\nif (intent === 'clarify') {\n  const trimmed = message.trim();\n  if (pureGreetingRegex.test(trimmed)) {\n    intent = 'greeting';\n    semanticStatus = 'ok';\n  } else if (pureThanksRegex.test(trimmed)) {\n    intent = 'thanks';\n    semanticStatus = 'ok';\n  } else if (pureGoodbyeRegex.test(trimmed)) {\n    intent = 'goodbye';\n    semanticStatus = 'ok';\n  }\n}\n\nconst socialPrefix = /^(hi|hii+|hello|hey|heyy+|good morning|good afternoon|good evening|morning|afternoon|evening|greetings|hiya|howdy)[,!.; ]+/i;\nconst pureSocial = ['greeting', 'goodbye', 'thanks'].includes(intent);\nconst greetingFlag = !pureSocial && ((sem && sem.greeting === true) || socialPrefix.test(message.trim()));\nconst goodbyeFlag = !pureSocial && !!(sem && sem.goodbye === true);\n\nreturn [{\n  json: {\n    ...dup,\n    intent,\n    handoff_reason: reason,\n    slots: {\n      starts_at: startsAt,\n      date: resolvedDate,\n      time_period: timePeriod,\n      time_constraint: timeConstraint,\n      confirmation_code: codeValue,\n      appointment_id: apptUuid\n        ? apptUuid[0]\n        : (v.payload.appointment_id ?? null),\n      dentist_id: v.payload.dentist_id ?? null,\n      service,\n      service_status: serviceStatus,\n      dentist_requested: dentistRequested,\n      date_invalid: dateInvalid,\n      date_past: datePast,\n      time_past: timePast,\n      date_known: dateKnown,\n      time_known: timeKnown,\n      week_hint_days: weekHintDays,\n    },\n    greeting: greetingFlag,\n    goodbye_flag: goodbyeFlag,\n    semantic: { status: semanticStatus, intent: semanticIntent, confidence: semanticConfidence, is_question: !!(sem && sem.is_question === true), is_action_request: !!(sem && sem.is_action_request === true), is_policy_question: !!(sem && sem.is_policy_question === true), date_text: sem ? strOrNull(sem.date_text) : null, time_text: sem ? strOrNull(sem.time_text) : null },\n    event_id: dup.event_id ?? null,\n    conversation_id: conv.conversation_id ?? dup.conversation_id ?? null,\n    is_new_conversation: conv.existing === false,\n    conversation_existing: conv.existing === true,\n    patient_id: pat.patient_id ?? dup.patient_id ?? null,\n    book_meta_b64: Buffer.from(\n      JSON.stringify({\n        channel: v.channel,\n        source: 'ai-receptionist',\n      }),\n      'utf8'\n    ).toString('base64'),\n    handoff_reason_b64: Buffer.from(\n      reason || 'unclear or free-form request',\n      'utf8'\n    ).toString('base64'),\n    handoff_ctx_b64: Buffer.from(\n      JSON.stringify({ message }),\n      'utf8'\n    ).toString('base64'),\n    lookup_pack: [\n      v.clinic_id,\n      pat.patient_id ?? dup.patient_id ?? '',\n      apptUuid ? apptUuid[0] : (v.payload.appointment_id ?? ''),\n      codeValue ?? '',\n    ].join('|'),\n  },\n}];"
+      },
+      "id": "d103d727-fb88-4e4c-8876-0b107a1661cb",
+      "name": "Extract Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3456,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.get_clinic_context($1::uuid) AS fn, (SELECT COALESCE(jsonb_agg(jsonb_build_object('kind', kind, 'starts_at', starts_at, 'ends_at', ends_at, 'reason', reason) ORDER BY starts_at), '[]'::jsonb) FROM api.schedule_blocks WHERE clinic_id = $1::uuid AND dentist_id IS NULL AND kind IN ('holiday', 'closure', 'maintenance') AND ends_at >= now()) AS closures",
+        "options": {
+          "queryReplacement": "={{ $json.clinic_id }}"
+        }
+      },
+      "id": "1ce17f96-714b-4d6a-932a-e0d8de4b5565",
+      "name": "Clinic Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3680,
+        704
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = ($json.fn ?? $json)?.data ?? {};\nconst ex = $('Extract Intent').first().json;\n\nconst dentists = ctx.dentists ?? [];\nconst services = ctx.services ?? [];\n\nconst s = { ...ex.slots };\nconst missing = [];\n\n// --------------------------------------------------\n// Dentist resolution (current clinic's catalog only)\n// --------------------------------------------------\nlet dentistAsk = false;\nif (s.dentist_requested) {\n  const want = String(s.dentist_requested).toLowerCase();\n  const match = dentists.find(x =>\n    (x.display_name ?? '').toLowerCase().includes(want)\n  );\n  if (match) {\n    s.dentist_id = match.id ?? match.dentist_id;\n    s.dentist_name = match.display_name;\n  } else {\n    // Requested dentist does not exist at this clinic: do not silently\n    // substitute; ask the patient to choose from the real list.\n    s.dentist_id = null;\n    s.dentist_name = null;\n    dentistAsk = true;\n  }\n}\n\nif (!s.dentist_id && dentists.length > 0) {\n  s.dentist_id = dentists[0].id ?? dentists[0].dentist_id;\n  if (!s.dentist_name) s.dentist_name = dentists[0].display_name ?? null;\n}\n\n// Deterministic service validation. Canonical service comes only from\n// Extract Intent's normalization (s.service: checkup|cleaning|filling).\n// Never default to an arbitrary clinic service: an unknown or unsupported\n// service must block booking and route to clarification instead.\nconst CANONICAL = ['checkup', 'cleaning', 'filling'];\nlet serviceInvalid = false;\n\nif (s.service_status === 'ok' && CANONICAL.includes(s.service)) {\n  const svc = services.find(x =>\n    (x.name ?? '').toLowerCase().includes(s.service) ||\n    (x.code ?? '').toLowerCase() === s.service\n  );\n  if (svc) {\n    s.service_id = svc.id ?? svc.service_id;\n  } else {\n    // Canonical value but clinic catalog has no match: treat as invalid.\n    serviceInvalid = true;\n  }\n} else if (s.service_status === 'unsupported') {\n  s.service_id = null;\n} else if (s.service_status === 'missing') {\n  // Missing service: never default for booking. Availability checks may\n  // safely fall back to the clinic's first service for slot spacing.\n  s.service_id = null;\n  if (ex.intent === 'availability' && services.length > 0) {\n    s.service_id = services[0].id ?? services[0].service_id;\n  }\n}\n\n// --------------------------------------------------\n// Tenant-scoped date validation (systemic).\n//\n// Extract Intent resolves date words without clinic context, so it uses a\n// UTC reference day. The clinic's real 'today' -- in the timezone stored in\n// the database for THIS clinic -- is the only authority for whether a date\n// is in the past. Re-derive it here and re-validate; never trust the\n// extraction-time comparison for tenant correctness.\n// --------------------------------------------------\n\nconst message = ex.message ?? '';\n\nconst tenantTz = ctx.timezone;\nif (tenantTz && (s.date || s.date_past || s.time_past)) {\n  const tzToday = (() => {\n    const parts = new Intl.DateTimeFormat('en-CA', {\n      timeZone: tenantTz, year: 'numeric', month: '2-digit', day: '2-digit'\n    }).formatToParts(new Date());\n    const p = Object.fromEntries(parts.map(x => [x.type, x.value]));\n    return p.year + '-' + p.month + '-' + p.day;\n  })();\n  s.date_past = !!s.date && s.date < tzToday;\n  if (!s.date_past && s.date === tzToday && s.starts_at) {\n    const hh = Number(s.starts_at.slice(11, 13));\n    const mi = Number(s.starts_at.slice(14, 16));\n    const nowParts = new Intl.DateTimeFormat('en-US', {\n      timeZone: tenantTz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'\n    }).formatToParts(new Date());\n    const np = Object.fromEntries(nowParts.map(x => [x.type, x.value]));\n    s.time_past = hh < Number(np.hour) || (hh === Number(np.hour) && mi <= Number(np.minute));\n  } else if (!s.date_past) {\n    s.time_past = false;\n  }\n}\n\nif (!s.date) {\n  const relativeDate = /\\b(today|tomorrow)\\b/i.exec(message);\n\n  if (relativeDate) {\n    const clinicTimezone =\n      ctx.timezone ||\n      'America/New_York';\n\n    const now = new Date();\n\n    const parts = new Intl.DateTimeFormat('en-CA', {\n      timeZone: clinicTimezone,\n      year: 'numeric',\n      month: '2-digit',\n      day: '2-digit'\n    }).formatToParts(now);\n\n    const p = Object.fromEntries(\n      parts.map(x => [x.type, x.value])\n    );\n\n    const clinicToday = new Date(\n      `${p.year}-${p.month}-${p.day}T12:00:00Z`\n    );\n\n    if (relativeDate[1].toLowerCase() === 'tomorrow') {\n      clinicToday.setUTCDate(\n        clinicToday.getUTCDate() + 1\n      );\n    }\n\n    s.date = [\n      clinicToday.getUTCFullYear(),\n      String(clinicToday.getUTCMonth() + 1).padStart(2, '0'),\n      String(clinicToday.getUTCDate()).padStart(2, '0')\n    ].join('-');\n  }\n}\n\n// --------------------------------------------------\n// Extract natural-language time (kept as a fallback only -- Extract\n// Intent's time parsing already supplies starts_at when present)\n// --------------------------------------------------\n\nlet localHour = null;\nlet localMinute = null;\n\nconst time12 = message.match(\n  /\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(AM|PM)\\b/i\n);\n\nconst time24 = message.match(\n  /\\b([01]?\\d|2[0-3]):([0-5]\\d)\\b/\n);\n\nif (time12) {\n  localHour = Number(time12[1]);\n  localMinute = Number(time12[2] ?? '0');\n\n  const meridiem = time12[3].toUpperCase();\n\n  if (meridiem === 'PM' && localHour !== 12) {\n    localHour += 12;\n  }\n\n  if (meridiem === 'AM' && localHour === 12) {\n    localHour = 0;\n  }\n} else if (time24) {\n  localHour = Number(time24[1]);\n  localMinute = Number(time24[2]);\n}\n\n// --------------------------------------------------\n// Convert clinic-local wall-clock time -> UTC\n// --------------------------------------------------\n\nfunction localTimeToUtc(date, hour, minute, timezone) {\n  const candidate = new Date(\n    Date.UTC(\n      Number(date.slice(0, 4)),\n      Number(date.slice(5, 7)) - 1,\n      Number(date.slice(8, 10)),\n      hour,\n      minute,\n      0,\n      0\n    )\n  );\n\n  const parts = new Intl.DateTimeFormat('en-US', {\n    timeZone: timezone,\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    hour: '2-digit',\n    minute: '2-digit',\n    second: '2-digit',\n    hourCycle: 'h23'\n  }).formatToParts(candidate);\n\n  const p = Object.fromEntries(\n    parts.map(x => [x.type, x.value])\n  );\n\n  const represented = Date.UTC(\n    Number(p.year),\n    Number(p.month) - 1,\n    Number(p.day),\n    Number(p.hour),\n    Number(p.minute),\n    Number(p.second)\n  );\n\n  const desired = Date.UTC(\n    Number(date.slice(0, 4)),\n    Number(date.slice(5, 7)) - 1,\n    Number(date.slice(8, 10)),\n    hour,\n    minute,\n    0\n  );\n\n  const offset = represented - candidate.getTime();\n\n  return new Date(desired - offset);\n}\n\n// --------------------------------------------------\n// Set starts_at correctly in UTC\n// --------------------------------------------------\n\nif (\n  s.date &&\n  localHour !== null &&\n  localMinute !== null &&\n  !s.time_known // only recompute when Extract Intent didn't already\n) {\n  const clinicTimezone =\n    ctx.timezone ||\n    'America/New_York';\n\n  const utcDate = localTimeToUtc(\n    s.date,\n    localHour,\n    localMinute,\n    clinicTimezone\n  );\n\n  s.starts_at = utcDate.toISOString();\n}\n\n// --------------------------------------------------\n// Existing timestamp support -- convert the clinic-local wall-clock\n// Extract Intent produced into a real UTC instant in the clinic's\n// timezone. Never discard a value Extract Intent already supplied.\n// --------------------------------------------------\n\nif (s.starts_at) {\n  const asParsed = new Date(s.starts_at);\n  if (s.time_known && /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}/.test(s.starts_at) && !/[zZ]|[+-]\\d{2}:?\\d{2}$/.test(s.starts_at)) {\n    const clinicTimezone = ctx.timezone || 'America/New_York';\n    const hh = Number(s.starts_at.slice(11, 13));\n    const mi = Number(s.starts_at.slice(14, 16));\n    s.starts_at = localTimeToUtc(s.date ?? s.starts_at.slice(0, 10), hh, mi, clinicTimezone).toISOString();\n  } else if (!Number.isNaN(asParsed.getTime())) {\n    s.starts_at = asParsed.toISOString();\n  }\n}\n\n// --------------------------------------------------\n// Required fields\n// --------------------------------------------------\n\nconst need = {\n  availability: ['date'],\n  book: ['date', 'time'],\n  cancel: ['appointment_id'],\n  reschedule: ['appointment_id', 'date', 'time'],\n  lookup: ['appointment_id']\n};\n\n// Invalid/past dates and past times are a controlled clarify, never a\n// DB call and never a 'missing date' ask.\nif (s.date_invalid) {\n  return [{ json: { ...ex, slots: s, action: 'clarify', missing: ['valid_date'], clinic: { name: ctx.name, timezone: ctx.timezone, hours: ctx.business_hours ?? ctx.hours ?? [] }, dentists, services } }];\n}\nif (s.date_past) {\n  return [{ json: { ...ex, slots: s, action: 'clarify', missing: ['future_date'], clinic: { name: ctx.name, timezone: ctx.timezone, hours: ctx.business_hours ?? ctx.hours ?? [] }, dentists, services } }];\n}\nif (s.time_past) {\n  return [{ json: { ...ex, slots: s, action: 'clarify', missing: ['future_time'], clinic: { name: ctx.name, timezone: ctx.timezone, hours: ctx.business_hours ?? ctx.hours ?? [] }, dentists, services } }];\n}\nif (dentistAsk) {\n  return [{ json: { ...ex, slots: s, action: 'clarify', missing: ['dentist_choice'], clinic: { name: ctx.name, timezone: ctx.timezone, hours: ctx.business_hours ?? ctx.hours ?? [] }, dentists, services } }];\n}\nif (s.week_hint_days !== null && s.week_hint_days !== undefined && !s.date) {\n  return [{ json: { ...ex, slots: s, action: 'clarify', missing: ['week_day'], clinic: { name: ctx.name, timezone: ctx.timezone, hours: ctx.business_hours ?? ctx.hours ?? [] }, dentists, services } }];\n}\n\nfor (const k of (need[ex.intent] ?? [])) {\n  if (k === 'date') {\n    if (!s.date) missing.push('date');\n    continue;\n  }\n  if (k === 'time') {\n    if (s.date && !s.starts_at) missing.push('time');\n    continue;\n  }\n  if (\n    !s[k] &&\n    !(k === 'appointment_id' && s.confirmation_code)\n  ) {\n    missing.push(k);\n  }\n}\n\n// Service is required only for booking a new appointment. Reschedule keeps\n// the existing appointment's service (api.reschedule_appointment takes no\n// service); availability, lookup and cancel do not need one either.\nif (serviceInvalid || (ex.intent === 'book' && !s.service_id)) {\n  missing.push('service');\n}\n\nlet action = ex.intent;\nconst settings = ctx.settings ?? {};\nconst nested = (settings.receptionist && typeof settings.receptionist === 'object') ? settings.receptionist : {};\nconst receptionistEnabled = settings.receptionist_enabled !== false && settings.enabled !== false && nested.enabled !== false;\n\nif (!receptionistEnabled) {\n  action = 'handoff';\n} else if (\n  ['book', 'cancel', 'reschedule', 'availability', 'lookup']\n    .includes(action) &&\n  missing.length > 0\n) {\n  action = 'clarify';\n}\n\nif (\n  receptionistEnabled &&\n  ['cancel', 'reschedule'].includes(ex.intent) &&\n  !s.appointment_id &&\n  s.confirmation_code &&\n  missing.length === 0\n) {\n  action = 'lookup_then_' + ex.intent;\n}\n\n// --------------------------------------------------\n// Output\n// --------------------------------------------------\n\nreturn [{\n  json: {\n    ...ex,\n    slots: s,\n    action,\n    missing,\n    clinic: {\n      name: ctx.name,\n      timezone: ctx.timezone,\n      hours: ctx.business_hours ?? ctx.hours ?? [],\n      settings: ctx.settings ?? {},\n      closures: $json.closures ?? []\n    },\n    dentists,\n    services\n  }\n}];"
+      },
+      "id": "f51bc1ec-70e8-4d7e-8b5c-11cb6928b949",
+      "name": "Resolve Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3904,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "availability",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "acb615de-2bc9-4824-9bfd-786369a3ccc3"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "availability"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "book",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "27e0e2da-964b-4a27-86ab-7daf45739c53"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "book"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "reschedule",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "0f7d0b16-c40f-4faa-a238-6efdc9191a1f"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reschedule"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "lookup",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "bd1056bc-ea0b-4c6c-9997-697030e0b579"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "lookup"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "faq",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1592aae4-2517-4be9-a718-ea3052258d3c"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "faq"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "clarify",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1afadf86-1ccf-462c-a7a3-d1808348f4b6"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "clarify"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "handoff",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "92cac21a-3df7-4ef3-9295-07571c1f36b6"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "handoff"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "53a4c48c-fca5-48d6-aa54-24abc8906ee1",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "lookup_then_cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "lookup_then_cancel"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "7e5fa050-beba-4232-a40e-a0e8442d705f",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cancel"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "lookup_then_reschedule",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "lookup_then_reschedule"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "2136c19b-d410-464c-988b-c29aaa10cb63",
+      "name": "Route Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2960,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.search_availability($1::uuid, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, $4::date, 25) AS fn",
+        "options": {
+          "queryReplacement": "={{ [$json.clinic_id, $json.slots.dentist_id, $json.slots.service_id, $json.slots.date].join(\",\") }}"
+        }
+      },
+      "id": "67b4f1d4-0e3e-4318-b560-d96a298ea3ad",
+      "name": "DB Availability",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3296,
+        176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? $json;\nconst ex = $('Resolve Slots').first().json;\nconst period = ex.slots?.time_period ?? null;\n\nif (period && r && r.ok !== false) {\n  const windows = {\n    morning: [6, 12],\n    afternoon: [12, 17],\n    evening: [17, 21],\n    night: [21, 24]\n  };\n\n  const win = windows[period];\n  const tz = ex.clinic?.timezone || 'America/New_York';\n\n  const slots = Array.isArray(r.data)\n    ? r.data\n    : (r.data?.slots ?? []);\n\n  const localHour = (s) => {\n    const d = new Date(s.starts_at ?? s);\n    const parts = new Intl.DateTimeFormat('en-US', {\n      timeZone: tz,\n      hour: '2-digit',\n      hourCycle: 'h23'\n    }).formatToParts(d);\n    const h = Object.fromEntries(parts.map(x => [x.type, x.value]));\n    return Number(h.hour);\n  };\n\n  const filtered = win\n    ? slots.filter(s => {\n        const h = localHour(s);\n        return h >= win[0] && h < win[1];\n      })\n    : slots;\n\n  if (Array.isArray(r.data)) {\n    r.data = filtered;\n  } else if (r.data && Array.isArray(r.data.slots)) {\n    r.data.slots = filtered;\n  }\n\n  r.time_period = period;\n}\n\n// Structured time constraint from Extract Intent (clinic-local HH:mm).\n// Applied deterministically to the DB candidates by slot START time:\n// after: > t; at_or_after: >= t; before: < t; at_or_before: <= t;\n// range: >= t and < end_time. 'exact' and 'around' are not filtered here\n// (Compose Reply keeps the exact-match / nearest-alternative behavior).\nconst tc = ex.slots?.time_constraint ?? null;\nconst FILTER_TYPES = ['after', 'at_or_after', 'before', 'at_or_before', 'range'];\nif (tc && FILTER_TYPES.includes(tc.type) && r && r.ok !== false) {\n  const tz2 = ex.clinic?.timezone || 'America/New_York';\n  const toMin = (hm) => (hm && /^[0-9]{2}:[0-9]{2}$/.test(hm)) ? Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5)) : null;\n  const t = toMin(tc.time);\n  const te = toMin(tc.end_time);\n  const slotMin = (sl) => {\n    const d = new Date(sl.starts_at ?? sl);\n    const parts = new Intl.DateTimeFormat('en-US', {\n      timeZone: tz2, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'\n    }).formatToParts(d);\n    const h = Object.fromEntries(parts.map(x => [x.type, x.value]));\n    return (Number(h.hour) % 24) * 60 + Number(h.minute);\n  };\n  const keep = (m) => {\n    if (t === null) return true;\n    switch (tc.type) {\n      case 'after': return m > t;\n      case 'at_or_after': return m >= t;\n      case 'before': return m < t;\n      case 'at_or_before': return m <= t;\n      case 'range': return te === null ? m >= t : (m >= t && m < te);\n      default: return true;\n    }\n  };\n  const all = Array.isArray(r.data) ? r.data : (r.data?.slots ?? []);\n  const kept = all.filter(sl => keep(slotMin(sl)));\n  if (Array.isArray(r.data)) r.data = kept;\n  else if (r.data && Array.isArray(r.data.slots)) r.data.slots = kept;\n  r.time_constraint = tc;\n}\n\nreturn [{ json: r }];"
+      },
+      "id": "747f0bc0-ea15-4b2c-9dcf-c0150b3736fc",
+      "name": "F Availability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst INFO_INTENTS = new Set([\n  'greeting', 'goodbye', 'thanks', 'smalltalk', 'current_clinic_time',\n  'faq_hours', 'faq_services', 'faq_location', 'faq_pricing',\n  'faq_dentists', 'faq_dentist_selection', 'faq_cancellation_policy',\n  'faq_reschedule_policy', 'faq_new_patient', 'faq_booking_process',\n  'faq_confirmation_code', 'faq_confirmation_process', 'faq_reminders',\n  'faq_preparation', 'faq_insurance', 'faq_payment', 'faq_emergency',\n  'faq_service_information', 'faq_general', 'faq', 'clarify'\n]);\n\nlet r, ex;\nif (INFO_INTENTS.has($json.action)) {\n  // Informational / clarify actions reach this node straight from\n  // Route Intent's fallback (no DB action ran), so Resolve Slots never\n  // executed in this branch -- its output IS the incoming item.\n  ex = $json;\n  r = { ok: true, code: 'OK' };\n} else {\n  r = $json;\n  ex = $('Resolve Slots').first().json;\n}\n\n// Mixed messages that opened with a greeting ('Hi, what are your hours?')\n// carry greeting=true from Extract Intent. Prefix a natural greeting on the\n// informational reply so the primary intent is preserved and the message\n// still feels conversational. Pure greetings/social messages keep their own\n// replies below and are unaffected.\nfunction withGreeting(text) {\n  if (!ex.greeting || !text) return text;\n  const m = (ex.message ?? '').trim();\n  let g = 'Hi! ';\n  if (/good morning/i.test(m)) g = 'Good morning! ';\n  else if (/good afternoon/i.test(m)) g = 'Good afternoon! ';\n  else if (/good evening/i.test(m)) g = 'Good evening! ';\n  return g + text.charAt(0).toLowerCase() + text.slice(1);\n}\nconst name = ex.clinic?.name ?? 'the clinic';\nconst tz = ex.clinic?.timezone ?? 'America/New_York';\n\n// -------------------------------------------------\n// Clinic-timezone formatting helpers (deterministic, no AI)\n// -------------------------------------------------\n\nconst MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];\n\nfunction partsOf(d) {\n  const parts = new Intl.DateTimeFormat('en-US', {\n    timeZone: tz,\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    weekday: 'long',\n    hour: 'numeric',\n    minute: '2-digit',\n    hour12: true\n  }).formatToParts(d);\n  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));\n  let h = Number(p.hour);\n  const ampm = (p.dayPeriod ?? 'AM').toUpperCase();\n  if (ampm === 'PM' && h !== 12) h += 12;\n  if (ampm === 'AM' && h === 12) h = 0;\n  return {\n    weekday: p.weekday,\n    year: Number(p.year),\n    month: Number(p.month),\n    day: Number(p.day),\n    hour: h,\n    minute: Number(p.minute)\n  };\n}\n\nfunction fmtTime(d) {\n  const p = partsOf(d);\n  const h12 = p.hour % 12 === 0 ? 12 : p.hour % 12;\n  return h12 + ':' + String(p.minute).padStart(2, '0') + (p.hour < 12 ? ' AM' : ' PM');\n}\n\nfunction fmtDateLong(d) {\n  const p = partsOf(d);\n  return p.weekday + ', ' + MONTHS[p.month - 1] + ' ' + p.day + ' at ' + fmtTime(d);\n}\n\nfunction fmtDayLabel(d) {\n  const p = partsOf(d);\n  const nowP = partsOf(new Date());\n  const dayNum = x => x.year * 10000 + x.month * 100 + x.day;\n  if (dayNum(p) === dayNum(nowP)) return 'today';\n  const tomorrow = new Date();\n  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);\n  if (dayNum(p) === dayNum(partsOf(tomorrow))) return 'tomorrow';\n  return 'on ' + p.weekday + ', ' + MONTHS[p.month - 1] + ' ' + p.day;\n}\n\nconst notFoundReply = \"I couldn't find an appointment with that confirmation code. Please double-check the code and try again.\";\n\n// -------------------------------------------------\n// Clinic-configuration helpers (DB is the only source of truth; nothing\n// is invented -- absent settings are answered honestly)\n// -------------------------------------------------\nconst settings = ex.clinic?.settings ?? {};\nconst nested = (settings.receptionist && typeof settings.receptionist === 'object') ? settings.receptionist : {};\n\nconst settingVal = (...keys) => {\n  for (const k of keys) {\n    if (settings[k] !== undefined && settings[k] !== null && settings[k] !== '') return settings[k];\n    if (nested[k] !== undefined && nested[k] !== null && nested[k] !== '') return nested[k];\n  }\n  return null;\n};\n\nconst receptionistEnabled = settings.receptionist_enabled !== false && settings.enabled !== false && nested.enabled !== false;\nif (!receptionistEnabled) {\n  const fallbackMsg = settingVal('fallback_message', 'fallbackMessage');\n  const pausedReply = (fallbackMsg && String(fallbackMsg).trim().length > 0)\n    ? String(fallbackMsg)\n    : \"I am connecting you with our human team right now. Please hold on.\";\n  return [{\n    json: {\n      ok: true,\n      code: 'OK',\n      reply: pausedReply,\n      reply_b64: Buffer.from(pausedReply, 'utf8').toString('base64'),\n      action: 'handoff',\n      clinic_id: ex.clinic_id,\n      conversation_id: ex.conversation_id,\n      provider_event_id: ex.provider_event_id,\n      event_id: ex.event_id,\n      patient_id: ex.patient_id,\n      channel: ex.channel\n    }\n  }];\n}\nconst DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];\nconst parseT = (t) => {\n  const m = String(t ?? '').match(/(\\d{1,2})(?::(\\d{2}))?/);\n  if (!m) return null;\n  return { h: Number(m[1]), m: Number(m[2] ?? 0) };\n};\nconst fmtH = (t) => {\n  const p = parseT(t);\n  if (!p) return null;\n  const ampm = p.h < 12 ? 'AM' : 'PM';\n  const h12 = p.h % 12 === 0 ? 12 : p.h % 12;\n  return p.m === 0 ? h12 + ' ' + ampm : h12 + ':' + String(p.m).padStart(2, '0') + ' ' + ampm;\n};\nfunction hoursSentence() {\n  const hours = ex.clinic?.hours ?? [];\n  if (!hours.length) return null;\n  const norm = hours\n    .map(h => ({ d: Number(h.day_of_week), o: fmtH(h.opens_at), c: fmtH(h.closes_at) }))\n    .filter(h => Number.isInteger(h.d) && h.o && h.c)\n    .sort((a, b) => a.d - b.d);\n  const key = (h) => h.o + '-' + h.c;\n  const runs = [];\n  let i = 0;\n  while (i < norm.length) {\n    let j = i;\n    while (j + 1 < norm.length && norm[j + 1].d === norm[j].d + 1 && key(norm[j + 1]) === key(norm[j])) j++;\n    runs.push({ from: norm[i].d, to: norm[j].d, o: norm[i].o, c: norm[i].c });\n    i = j + 1;\n  }\n  const segs = runs.map(run => {\n    const range = run.from === run.to ? DAYS[run.from] : DAYS[run.from] + ' through ' + DAYS[run.to];\n    return range + ' from ' + run.o + ' to ' + run.c;\n  });\n  return \"We're open \" + segs.join(', and ') + '.';\n}\n// Specific-day hours: uses the already-resolved ex.slots.date (authoritative,\n// never re-parsed from the message) and the clinic's own hours rows.\n// A day with no hours row is treated as closed. Nothing is hardcoded.\nfunction requestedDayOfWeek() {\n  const ds = ex.slots?.date;\n  if (!ds) return null;\n  const m = String(ds).match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/);\n  if (m) {\n    // Resolve Slots already produced this calendar date in the clinic's\n    // timezone; its weekday is fixed, so evaluate it at UTC noon.\n    return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12)).getUTCDay();\n  }\n  const d = new Date(ds);\n  if (isNaN(d.getTime())) return null;\n  const wd = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(d);\n  const idx = DAYS.indexOf(wd);\n  return idx >= 0 ? idx : null;\n}\nfunction dayHoursSentence() {\n  const dow = requestedDayOfWeek();\n  if (dow === null) return null;\n  const hours = ex.clinic?.hours ?? [];\n  if (!hours.length) return null;\n  const dayName = DAYS[dow];\n  // Clinic-level closures (schedule_blocks, dentist_id NULL) override regular hours.\n  const dstr = String(ex.slots?.date ?? '');\n  if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(dstr)) {\n    const localDate = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);\n    const blk = (ex.clinic?.closures ?? []).find(b => {\n      const st = new Date(b.starts_at), en = new Date(b.ends_at);\n      if (isNaN(st.getTime()) || isNaN(en.getTime())) return false;\n      return localDate(st) <= dstr && dstr <= localDate(new Date(en.getTime() - 1));\n    });\n    if (blk) return \"We're closed on \" + dayName + (blk.reason ? ' (' + blk.reason + ')' : '') + '.';\n  }\n  const rows = hours\n    .filter(h => Number(h.day_of_week) === dow)\n    .map(h => ({ o: h.opens_at ?? h.open_time, c: h.closes_at ?? h.close_time }))\n    .filter(h => parseT(h.o) && parseT(h.c))\n    .sort((a, b) => { const x = parseT(a.o), y = parseT(b.o); return (x.h * 60 + x.m) - (y.h * 60 + y.m); });\n  const msg = String(ex.message ?? '').toLowerCase();\n  const asksClose = /(what time|when|how late)[^?.!]*clos|open (until|till)/.test(msg);\n  const asksOpen = !asksClose && /(what time|when|how early)[^?.!]*open/.test(msg);\n  if (!rows.length) {\n    if (asksOpen) return \"We're closed on \" + dayName + \", so we don't have opening hours that day.\";\n    if (asksClose) return \"We're closed on \" + dayName + \", so we don't have closing hours that day.\";\n    return \"We're closed on \" + dayName + '.';\n  }\n  const first = fmtH(rows[0].o);\n  const last = fmtH(rows[rows.length - 1].c);\n  if (asksOpen) return 'We open at ' + first + ' on ' + dayName + '.';\n  if (asksClose) return 'We close at ' + last + ' on ' + dayName + '.';\n  const ranges = rows.map(h => fmtH(h.o) + ' to ' + fmtH(h.c)).join(' and from ');\n  return \"Yes, we're open on \" + dayName + ' from ' + ranges + '.';\n}\nconst svcLabel = (sv) => sv.name ?? sv.code ?? '';\nconst dentistsList = (ex.dentists ?? []).map(d => d.display_name).filter(Boolean);\nconst servicesList = (ex.services ?? []).map(svcLabel).filter(Boolean);\nconst teamWord = dentistsList.length > 1 ? 'our team' : (dentistsList[0] ?? 'our team');\n\nfunction clinicTimeNow() {\n  const parts = new Intl.DateTimeFormat('en-US', {\n    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true, weekday: 'long',\n  }).formatToParts(new Date());\n  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));\n  return { text: p.hour + ':' + p.minute + ' ' + (p.dayPeriod ?? ''), weekday: p.weekday };\n}\n\nlet reply;\nlet ok = r.ok !== false;\nlet code = r.code ?? 'OK';\n\nconst errMsg = (r.message ?? '').toLowerCase();\nconst alreadyCancelled = errMsg.includes('cannot be cancelled from status cancelled');\n// Explicit structured time constraint (from Extract Intent) takes precedence.\n// exact/around -> existing exact-time behavior; after/before/at_or_after/\n// at_or_before/range -> slots already filtered in F Availability, and only\n// those constraint-satisfying slots are ever offered.\nconst timeConstraint = ex.slots?.time_constraint ?? null;\nconst CONSTRAINT_FILTER_TYPES = ['after', 'at_or_after', 'before', 'at_or_before', 'range'];\nconst hasRangeConstraint = !!timeConstraint && CONSTRAINT_FILTER_TYPES.includes(timeConstraint.type);\nconst hasExactTimeAsk = timeConstraint\n  ? ((timeConstraint.type === 'exact' || timeConstraint.type === 'around') && !!ex.slots?.starts_at && !ex.slots?.time_period)\n  : (!!ex.slots?.starts_at && !ex.slots?.time_period);\nfunction fmtHM(hm) {\n  if (!hm || !/^[0-9]{2}:[0-9]{2}$/.test(hm)) return '';\n  const h = Number(hm.slice(0, 2));\n  const m = hm.slice(3, 5);\n  const h12 = h % 12 === 0 ? 12 : h % 12;\n  return h12 + ':' + m + (h < 12 ? ' AM' : ' PM');\n}\nfunction constraintLabel(c) {\n  if (!c) return '';\n  const t = fmtHM(c.time);\n  switch (c.type) {\n    case 'after': return 'after ' + t;\n    case 'at_or_after': return 'from ' + t + ' onward';\n    case 'before': return 'before ' + t;\n    case 'at_or_before': return 'at or before ' + t;\n    case 'range': return 'between ' + t + ' and ' + fmtHM(c.end_time);\n    default: return '';\n  }\n}\n\nswitch (ex.action) {\n  case 'availability': {\n    const slots = (Array.isArray(r.data) ? r.data : (r.data?.slots ?? []))\n      .map(s => new Date(s.starts_at ?? s))\n      .filter(d => !Number.isNaN(d.getTime()));\n\n    const wantedRaw = ex.slots?.starts_at ? new Date(ex.slots.starts_at) : null;\n    // Exact-time availability requires the patient to have given an explicit\n    // clock time; a time period ('tomorrow afternoon') is a range, not a\n    // yes/no question about one slot.\n    const hasExactTime = hasExactTimeAsk;\n\n    if (!ok) {\n      reply = \"Sorry, I wasn't able to check our schedule just now. Please try again in a moment.\";\n      break;\n    }\n\n    if (hasRangeConstraint) {\n      // Slots were already restricted to the requested constraint in\n      // F Availability; never fall back to slots outside it.\n      const label = constraintLabel(timeConstraint);\n      const dayLbl = ex.slots?.date\n        ? fmtDayLabel(new Date(ex.slots.date + 'T12:00:00Z'))\n        : 'that day';\n      if (slots.length) {\n        const times = slots.slice(0, 5).map(fmtTime);\n        const list = times.length > 1\n          ? times.slice(0, -1).join(', ') + ', and ' + times[times.length - 1]\n          : times[0];\n        reply = 'I have ' + list + ' available ' + fmtDayLabel(slots[0]) + '. Which time would you prefer?';\n      } else {\n        reply = \"I don't see any openings \" + label + ' ' + dayLbl + '. Would you like me to check a different time or another day?';\n      }\n    } else if (hasExactTime && wantedRaw && !Number.isNaN(wantedRaw.getTime())) {\n      const match = slots.some(s => s.getTime() === wantedRaw.getTime());\n      const reqLabel = fmtTime(wantedRaw) + ' ' + fmtDayLabel(wantedRaw);\n      if (match) {\n        reply = 'Yes, ' + reqLabel + ' is available. Would you like me to book it?';\n      } else {\n        const nearby = slots\n          .map(s => ({ s, diff: Math.abs(s.getTime() - wantedRaw.getTime()) }))\n          .sort((a, b) => a.diff - b.diff)\n          .slice(0, 2)\n          .map(x => fmtTime(x.s));\n        reply = nearby.length\n          ? fmtTime(wantedRaw) + \" isn't available \" + fmtDayLabel(wantedRaw) + '. I can offer ' + nearby.join(' or ') + ' instead. Would either work for you?'\n          : fmtTime(wantedRaw) + \" isn't available \" + fmtDayLabel(wantedRaw) + \", and I don't see other openings that day. Would you like me to check another date?\";\n      }\n    } else if (slots.length) {\n      const times = slots.slice(0, 5).map(fmtTime);\n      const list = times.length > 1\n        ? times.slice(0, -1).join(', ') + ', and ' + times[times.length - 1]\n        : times[0];\n      reply = 'I have ' + list + ' available ' + fmtDayLabel(slots[0]) + '. Which time would you prefer?';\n    } else {\n      reply = \"I don't see any openings that day. Would you like me to check another date?\";\n    }\n    break;\n  }\n\n  case 'book': {\n    const outsideHours = /outside business|outside working|outside.*hours/i.test(r.message ?? '');\n    const bookedOk = r.ok === true && !!r.data?.appointment_id && !!r.data?.confirmation_code;\n    if (bookedOk) {\n      const a = r.data ?? {};\n      const when = a.starts_at ? fmtDateLong(new Date(a.starts_at)) : 'the requested time';\n      reply = \"You're all set. Your appointment is booked for \" + when + \". Your confirmation code is \" + (a.confirmation_code ?? '') + '.';\n    } else if (code === 'CONFLICT' && /overlaps a break, leave, or closure/i.test(r.message ?? '')) {\n      const reqStart = ex.slots?.starts_at ? new Date(ex.slots.starts_at) : null;\n      if (reqStart && !Number.isNaN(reqStart.getTime())) {\n        const svc = (ex.services ?? []).find(x => (x.id ?? x.service_id) === ex.slots?.service_id);\n        const spanMin = svc ? Number(svc.duration_minutes ?? 0) + Number(svc.buffer_minutes ?? 0) : 0;\n        const reqEnd = new Date(reqStart.getTime() + spanMin * 60000);\n        const clinicClosed = (ex.clinic?.closures ?? []).some(b =>\n          new Date(b.starts_at) < reqEnd && new Date(b.ends_at) > reqStart && !(spanMin === 0 && new Date(b.starts_at) > reqStart)\n        );\n        const bp = partsOf(reqStart);\n        const dayText = bp.weekday + ', ' + MONTHS[bp.month - 1] + ' ' + bp.day;\n        if (clinicClosed) {\n          reply = 'The clinic is closed on ' + dayText + \", so I can't book an appointment at that time. Would you like me to find another available time?\";\n        } else {\n          const who = ex.slots?.dentist_name ?? 'The dentist';\n          reply = who + ' is unavailable at that time on ' + dayText + \", so I can't book it. Would you like me to find another available time?\";\n        }\n      } else {\n        reply = \"The clinic or dentist is unavailable at that time, so I can't book it. Would you like me to find another available time?\";\n      }\n    } else if (code === 'CONFLICT') {\n      reply = 'That time has just been taken. Would you like me to find another time that works for you?';\n    } else if (outsideHours) {\n      reply = \"That time falls outside our opening hours. Would you like me to suggest some times when we're open?\";\n    } else {\n      ok = false;\n      if (code === 'OK') code = 'DB_FAILURE';\n      reply = \"Sorry, I wasn't able to book that appointment. Please try again.\";\n    }\n    break;\n  }\n\n  case 'cancel':\n  case 'lookup_then_cancel': {\n    if (ok) {\n      reply = 'Done — your appointment has been cancelled.';\n    } else if (alreadyCancelled) {\n      reply = \"That appointment has already been cancelled, so there's nothing else you need to do.\";\n    } else if (r.lookup_failed || code === 'NOT_FOUND') {\n      reply = notFoundReply;\n    } else {\n      reply = \"Sorry, I wasn't able to cancel that appointment. Please try again.\";\n    }\n    break;\n  }\n\n  case 'reschedule':\n  case 'lookup_then_reschedule': {\n    const alreadyRescheduled = errMsg.includes('cannot be rescheduled from status rescheduled');\n    if (ok) {\n      const a = r.data ?? {};\n      const when = a.starts_at ? fmtDateLong(new Date(a.starts_at)) : null;\n      reply = when\n        ? \"Done — I've moved your appointment to \" + when + '.'\n        : 'Done — your appointment has been moved.';\n    } else if (r.lookup_failed || code === 'NOT_FOUND') {\n      reply = notFoundReply;\n    } else if (alreadyRescheduled) {\n      reply = \"That appointment has already been moved, so it can't be moved again from here. If you need to change it, please contact the clinic directly and we'll take care of it.\";\n    } else if (code === 'CONFLICT' && /overlaps a break, leave, or closure/i.test(r.message ?? '')) {\n      const reqStart = ex.slots?.starts_at ? new Date(ex.slots.starts_at) : null;\n      const startOk = !!reqStart && !Number.isNaN(reqStart.getTime());\n      const clinicClosed = startOk && (ex.clinic?.closures ?? []).some(b =>\n        new Date(b.starts_at) <= reqStart && new Date(b.ends_at) > reqStart\n      );\n      if (clinicClosed) {\n        const bp = partsOf(reqStart);\n        const dayText = bp.weekday + ', ' + MONTHS[bp.month - 1] + ' ' + bp.day;\n        reply = 'The clinic is closed on ' + dayText + \", so I can't move your appointment to that time. Would you like me to suggest another available time?\";\n      } else {\n        reply = \"The requested time isn't available, so I can't move your appointment to that time. Would you like me to suggest another available time?\";\n      }\n    } else if (code === 'CONFLICT') {\n      reply = \"That new time conflicts with another booking. Would you like me to suggest a different time?\";\n    } else {\n      reply = \"Sorry, I wasn't able to reschedule that appointment. Please try again.\";\n    }\n    break;\n  }\n\n  case 'lookup': {\n    const a = r.data ?? {};\n    if (!ok || r.lookup_failed) {\n      reply = notFoundReply;\n    } else if (!a.starts_at) {\n      reply = notFoundReply;\n    } else if (a.status === 'cancelled') {\n      reply = 'That appointment has already been cancelled. It was originally scheduled for ' + fmtDateLong(new Date(a.starts_at)) + '.';\n    } else {\n      reply = 'Your appointment is booked for ' + fmtDateLong(new Date(a.starts_at)) + '.';\n    }\n    break;\n  }\n\n  case 'greeting': {\n    const customGreeting = settingVal('greeting_message', 'welcome_message', 'welcomeMessage');\n    reply = (customGreeting && String(customGreeting).trim().length > 0)\n      ? String(customGreeting)\n      : \"Hello! Welcome to \" + name + \". How can I assist you today?\";\n    break;\n  }\n\n  case 'handoff': {\n    const fallbackMsg = settingVal('fallback_message', 'fallbackMessage');\n    reply = (fallbackMsg && String(fallbackMsg).trim().length > 0)\n      ? String(fallbackMsg)\n      : \"I am connecting you with our human team right now. Please hold on.\";\n    break;\n  }\n\n  case 'thanks':\n    reply = \"You're very welcome! Is there anything else I can help you with?\";\n    break;\n\n  case 'goodbye':\n    reply = \"Take care, and have a great day. Goodbye!\";\n    break;\n\n  case 'smalltalk':\n    reply = \"I'm doing well, thank you for asking! How can I help you with your dental care today?\";\n    break;\n\n  case 'current_clinic_time': {\n    const t = clinicTimeNow();\n    reply = \"It's currently \" + t.text + ' on ' + t.weekday + ' here at the clinic.';\n    break;\n  }\n\n  case 'faq_hours':\n    reply = dayHoursSentence() ?? hoursSentence() ?? \"I don't have our current hours on file right now.\";\n    if (ex.action === 'current_clinic_time') {\n      reply = reply;\n    }\n    break;\n\n  case 'faq_services': {\n    reply = servicesList.length\n      ? 'We currently offer ' + (servicesList.length > 1 ? servicesList.slice(0, -1).join(', ') + ', and ' + servicesList[servicesList.length - 1] : servicesList[0]) + '.'\n      : \"I don't have our list of services on file right now.\";\n    break;\n  }\n\n  case 'faq_service_information': {\n    const svcs = ex.services ?? [];\n    const q = (ex.message ?? '').toLowerCase();\n    const hit = svcs.find(sv => q.includes((sv.code ?? '').toLowerCase()) || q.includes((sv.name ?? '').toLowerCase()));\n    // Every fact comes from the clinic's own service row; anything the DB\n    // does not store is answered honestly, never invented.\n    if (hit) {\n      if (/(how much|price|cost|charge|fee)/i.test(ex.message ?? '')) {\n        reply = \"I don't have current pricing on file for that service. The clinic can give you an exact figure.\";\n      } else if (/(how long|duration|take)/i.test(ex.message ?? '')) {\n        reply = hit.duration_minutes\n          ? 'A ' + svcLabel(hit) + ' usually takes about ' + hit.duration_minutes + ' minutes.'\n          : \"I don't have the duration of that service on file.\";\n      } else if (/(include|what is|what's|describe|description|about)/i.test(ex.message ?? '')) {\n        const desc = hit.description ?? hit.details ?? null;\n        reply = desc\n          ? String(desc)\n          : 'A ' + svcLabel(hit) + \" is one of the services we offer. I don't have a more detailed description on file.\";\n      } else {\n        reply = 'A ' + svcLabel(hit) + ' is one of the services we offer.';\n      }\n    } else if (ex.slots?.service_status === 'unsupported') {\n      reply = servicesList.length\n        ? \"That particular treatment isn't on our list. We currently offer \" + servicesList.join(', ') + '.'\n        : \"That particular treatment isn't on our current list of services.\";\n    } else {\n      reply = servicesList.length\n        ? 'We currently offer ' + servicesList.join(', ') + '.'\n        : \"I don't have the details of that service on file.\";\n    }\n    break;\n  }\n\n  case 'faq_location': {\n    const addr = settingVal('address', 'location', 'street_address');\n    reply = addr\n      ? 'You can find us at ' + addr + '.'\n      : \"I don't have our address on file right now.\";\n    break;\n  }\n\n  case 'faq_pricing': {\n    const priceNote = settingVal('pricing_note', 'pricing', 'prices');\n    if (priceNote) {\n      reply = priceNote;\n    } else {\n      reply = \"I don't have current pricing on file. The clinic can give you an exact figure for the treatment you need.\";\n    }\n    break;\n  }\n\n  case 'faq_dentists': {\n    reply = dentistsList.length\n      ? (dentistsList.length > 1 ? 'Our dentists are ' + dentistsList.join(' and ') : 'Our dentist is ' + dentistsList[0]) + '.'\n      : \"I don't have our dentist list on file right now.\";\n    break;\n  }\n\n  case 'faq_dentist_selection': {\n    const sel = settingVal('dentist_selection', 'dentist_selection_policy');\n    reply = sel ?? (dentistsList.length > 1\n      ? 'Yes, you can let us know which dentist you prefer when booking, and we will do our best to accommodate you.'\n      : 'All appointments here are with ' + (dentistsList[0] ?? 'our dentist') + '.');\n    break;\n  }\n\n  case 'faq_cancellation_policy': {\n    const pol = settingVal('cancellation_policy', 'cancellationPolicy');\n    reply = (pol && String(pol).trim().length > 0)\n      ? String(pol)\n      : \"You can cancel your appointment through this chat using your confirmation code, or by contacting the clinic directly.\";\n    break;\n  }\n\n  case 'faq_reschedule_policy': {\n    const pol = settingVal('rescheduling_policy', 'reschedule_policy', 'cancellation_policy', 'cancellationPolicy');\n    reply = (pol && String(pol).trim().length > 0)\n      ? String(pol)\n      : \"You can reschedule your appointment through this chat using your confirmation code, or by contacting the clinic directly.\";\n    break;\n  }\n\n  case 'faq_new_patient': {\n    const newPatient = settingVal('new_patient_info', 'first_visit_info');\n    reply = newPatient ?? \"I don't have our first-visit information on file right now.\";\n    break;\n  }\n\n  case 'faq_preparation': {\n    const prep = settingVal('preparation_instructions', 'preparation');\n    reply = prep ?? \"I don't have specific preparation instructions on file for that. The clinic will share anything you need when your appointment is confirmed.\";\n    break;\n  }\n\n  case 'faq_booking_process':\n    reply = 'Booking is easy — just tell me which service you need and the day and time that suit you, and I will confirm it right here. You will get a confirmation code once it is booked.';\n    break;\n\n  case 'faq_confirmation_code':\n    reply = 'Your confirmation code is a short code you receive when your appointment is booked — it identifies your booking. Keep it handy: you can use it here to check, reschedule, or cancel your appointment.';\n    break;\n\n  case 'faq_confirmation_process':\n    reply = 'Once your appointment is booked, you will receive a confirmation with your appointment details and a confirmation code. If anything changes, we will let you know.';\n    break;\n\n  case 'faq_reminders': {\n    const rem = settingVal('reminder_policy', 'reminders');\n    reply = rem ?? \"I don't have our reminder schedule on file, but the clinic will make sure you know about your upcoming appointment.\";\n    break;\n  }\n\n  case 'faq_insurance': {\n    const ins = settingVal('accepted_insurance', 'acceptedInsurance', 'insurance', 'insurance_info');\n    if (ins && String(ins).trim().length > 0) {\n      const insText = String(ins).trim();\n      const msgText = String(ex.message ?? '').toLowerCase();\n      const knownPlans = [\n        'delta dental', 'delta', 'metlife', 'cigna', 'guardian', 'aetna',\n        'blue cross', 'blue shield', 'anthem', 'humana', 'united healthcare',\n        'unitedhealthcare', 'medicaid', 'medicare', 'careington', 'geha',\n        'ameritas', 'sun life', 'principal'\n      ];\n      const matchedPlan = knownPlans.find(p => msgText.includes(p));\n      if (matchedPlan) {\n        const planInPolicy = insText.toLowerCase().includes(matchedPlan);\n        const capName = matchedPlan.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');\n        if (planInPolicy) {\n          reply = \"Yes, we accept \" + capName + \"! \" + insText;\n        } else {\n          reply = \"We don't currently have \" + capName + \" listed among our accepted insurance plans. \" + insText + \" Please contact our team directly to verify coverage for your specific policy.\";\n        }\n      } else {\n        reply = insText;\n      }\n    } else {\n      reply = \"I don't have insurance information on file. The clinic can check your specific plan for you.\";\n    }\n    break;\n  }\n\n  case 'faq_payment': {\n    const pay = settingVal('payment_methods', 'payment', 'payment_info');\n    reply = pay ?? \"I don't have payment information on file. The clinic can tell you which payment methods they accept.\";\n    break;\n  }\n\n  case 'faq_emergency': {\n    const emGuidance = settingVal('emergency_guidance', 'emergency');\n    const emPhone = settingVal('emergency_phone', 'emergencyPhone');\n    if (emPhone && String(emPhone).trim().length > 0) {\n      const cleanPhone = String(emPhone).trim();\n      if (emGuidance && String(emGuidance).trim().length > 0) {\n        reply = String(emGuidance).trim() + \" For urgent dental emergencies, please call our emergency line at \" + cleanPhone + \". If you are experiencing a life-threatening medical emergency, please call 911 right away.\";\n      } else {\n        reply = \"If you are experiencing a dental emergency, please call our clinic immediately at \" + cleanPhone + \". If you are experiencing a life-threatening medical emergency, please call emergency services (911) right away.\";\n      }\n    } else if (emGuidance && String(emGuidance).trim().length > 0) {\n      reply = String(emGuidance).trim();\n    } else {\n      reply = \"If you are experiencing a dental emergency, please call the clinic right away. If it is life-threatening, please call emergency services first.\";\n    }\n    break;\n  }\n\n  case 'faq_general':\n  case 'faq':\n    reply = 'I can help with booking, rescheduling, or cancelling appointments, checking availability, and questions about our services and hours.';\n    break;\n\n\n  case 'clarify': {\n    const missing = ex.missing ?? [];\n    const asks = [];\n    for (const m of missing) {\n      if (m === 'starts_at') {\n        asks.push(ex.intent === 'book'\n          ? 'what day and time would you like to come in?'\n          : ex.intent === 'reschedule'\n            ? 'what day and time would you like to move your appointment to?'\n            : 'what day and time would work best for you?');\n      } else if (m === 'date') {\n        if (ex.intent === 'book') {\n          asks.push(missing.includes('time')\n            ? 'what day and time would you like to come in?'\n            : 'what day would you like to come in?');\n        } else if (ex.intent === 'reschedule') {\n          asks.push(missing.includes('time')\n            ? 'what day and time would you like to move your appointment to?'\n            : 'what day would you like to move your appointment to?');\n        } else {\n          asks.push('which day would you like to check?');\n        }\n      } else if (m === 'time') {\n        const period = ex.slots?.time_period;\n        const inPeriod = period ? ' in the ' + period : '';\n        asks.push(ex.intent === 'book'\n          ? 'what time' + inPeriod + ' would you like to come in?'\n          : ex.intent === 'reschedule'\n            ? 'what time would you like to move your appointment to?'\n            : 'what time' + inPeriod + ' would work best for you?');\n      } else if (m === 'appointment_id') {\n        asks.push('could you share your confirmation code so I can find the appointment?');\n      } else if (m === 'patient_name') {\n        asks.push('may I have your name?');\n      }\n    }\n\n    // Systemic clarify cases produced by Resolve Slots\n    if (missing.includes('valid_date')) {\n      reply = \"Oops 😊 that date doesn't exist on the calendar. Could you give me the correct date, and I'll be happy to check availability for you?\";\n    } else if (missing.includes('future_date')) {\n      reply = 'That date has already passed. Which upcoming day would you like instead?';\n    } else if (missing.includes('future_time')) {\n      reply = 'That time has already passed today. Which later time, or which other day, would work for you?';\n    } else if (missing.includes('dentist_choice')) {\n      const reqName = ex.slots?.dentist_requested ? 'Dr. ' + String(ex.slots.dentist_requested).charAt(0).toUpperCase() + String(ex.slots.dentist_requested).slice(1) : null;\n      const notFound = reqName ? \"I couldn't find a dentist named \" + reqName + ' at our clinic.' : \"I couldn't find that dentist at our clinic.\";\n      const roster = dentistsList.length > 1\n        ? ' Our dentists are ' + dentistsList.slice(0, -1).join(', ') + ', and ' + dentistsList[dentistsList.length - 1] + '.'\n        : dentistsList.length === 1 ? ' Our dentist is ' + dentistsList[0] + '.' : '';\n      reply = notFound + roster;\n    } else if (missing.includes('dentist_choice')) {\n      reply = dentistsList.length\n        ? \"I couldn't find that dentist at our clinic. You would be seen by \" + (dentistsList.length > 1 ? dentistsList.join(' or ') : dentistsList[0]) + ' — would you like me to book with ' + (dentistsList.length > 1 ? 'one of them' : dentistsList[0]) + '?'\n        : \"I couldn't find that dentist at our clinic. Would you like me to check with the team?\";\n    } else if (missing.includes('week_day')) {\n      reply = 'Sure — which day that week would work best for you?';\n    } else {\n      const serviceAsk =\n        ex.slots?.service_status === 'unsupported'\n          ? (servicesList.length\n              ? 'We currently offer ' + servicesList.join(', ') + '. Which one would you like to book?'\n              : \"That treatment isn't on our current list of services. Would you like me to connect you with the team?\")\n          : (servicesList.length\n              ? 'Of course. Which service would you like to book — ' + (servicesList.length > 1 ? servicesList.slice(0, -1).join(', ') + ', or ' + servicesList[servicesList.length - 1] : servicesList[0]) + '?'\n              : 'Of course. Which service would you like to book?');\n\n      if (ex.intent === 'book' && missing.includes('service')) {\n        const rest = asks.filter(a => !a.startsWith('is that for'));\n        reply = rest.length\n          ? serviceAsk + ' And ' + rest.join(' and ') + ''\n          : serviceAsk;\n      } else {\n        reply = asks.length\n          ? 'Happy to help — ' + asks.join(' And ') + ''\n          : 'Happy to help — could you give me a little more detail about what you need? For example, I can book, reschedule, or cancel an appointment, or answer questions about our services and hours.';\n      }\n    }\n    break;\n  }\n\n  default:\n    reply = \"Of course. I'll connect you with someone from the clinic who can help.\";\n}\n\nif (INFO_INTENTS.has(ex.action) && ex.action !== 'greeting') {\n  reply = withGreeting(reply);\n}\n\nfunction applyTone(text, currentTone, currentAction) {\n  if (!text || currentAction === 'greeting' || currentAction === 'handoff') return text;\n  if (!currentTone || currentTone === 'professional') return text;\n  \n  if (currentTone === 'concise') {\n    let s = text;\n    s = s.replace(/^(Happy to help — |Of course[.] |Certainly[.] |You're very welcome! |I'd be happy to help with that[.] )/i, '');\n    s = s.replace(/Which time would you prefer\\?/i, 'Which time works for you?');\n    s = s.replace(/Would you like me to find another available time\\?/i, 'Check another time?');\n    s = s.replace(/Would you like me to book it\\?/i, 'Book this?');\n    s = s.replace(/Done — your appointment has been cancelled[.]/i, 'Your appointment has been cancelled.');\n    s = s.replace(/Done — I've moved your appointment to /i, 'Appointment moved to ');\n    return s.trim();\n  }\n  \n  if (currentTone === 'empathetic') {\n    if (currentAction === 'book' && text.includes(\"You're all set\")) {\n      return \"You're all set! We look forward to seeing you and taking gentle care of you. \" + text;\n    }\n    if (currentAction === 'cancel') {\n      return text + \" We hope everything is okay, and we're here whenever you're ready to reschedule.\";\n    }\n    if (currentAction === 'faq_emergency') {\n      return \"We're so sorry you're dealing with dental discomfort. \" + text;\n    }\n    if (currentAction === 'clarify' && text.startsWith('Happy to help')) {\n      return \"We're here to take great care of you. \" + text;\n    }\n    return text;\n  }\n  \n  return text;\n}\n\nconst tone = (settingVal('tone') ?? 'professional').toLowerCase();\nreply = applyTone(reply, tone, ex.action);\n\nreturn [{\n  json: {\n    ok,\n    code,\n    reply,\n    reply_b64: Buffer.from(reply, 'utf8').toString('base64'),\n    action: ex.action,\n    clinic_id: ex.clinic_id,\n    conversation_id: ex.conversation_id,\n    provider_event_id: ex.provider_event_id,\n    event_id: ex.event_id,\n    patient_id: ex.patient_id,\n    channel: ex.channel\n  }\n}];\n"
+      },
+      "id": "b6d30397-0e01-4397-b0af-d1f5ed5eb549",
+      "name": "Compose Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3952,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO api.messages (clinic_id, conversation_id, direction, kind, body, provider_message_id)\nVALUES ($1::uuid, $2::uuid, 'outbound', 'patient_text', convert_from(decode($3,'base64'),'UTF8'), $4)\nON CONFLICT (conversation_id, provider_message_id) DO NOTHING\nRETURNING id",
+        "options": {
+          "queryReplacement": "={{ [$json.clinic_id, $json.conversation_id, $json.reply_b64, $json.provider_event_id + \":reply\"].join(\",\") }}"
+        }
+      },
+      "id": "0bd2d226-70b3-45a8-b237-5c49bfa18fa8",
+      "name": "Log Outbound Message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        4176,
+        688
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.mark_event_processed($1::uuid, 'processed') AS fn",
+        "options": {
+          "queryReplacement": "={{ $(\"Compose Reply\").first().json.event_id }}"
+        }
+      },
+      "id": "6fa4cf57-0b41-4026-b57e-26cdda604d8b",
+      "name": "Mark Processed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        4400,
+        688
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ch",
+              "leftValue": "={{ String($(\"Validate & Normalize\").first().json.channel ?? \"\") }}",
+              "rightValue": "whatsapp",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "pv",
+              "leftValue": "={{ String($(\"Validate & Normalize\").first().json.provider ?? \"\") }}",
+              "rightValue": "meta_whatsapp",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "pn",
+              "leftValue": "={{ (() => { try { return String($(\"Inbound Message\").first().json.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? \"\"); } catch (e) { return \"\"; } })() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "obj",
+              "leftValue": "={{ (() => { try { return String($(\"Inbound Message\").first().json.body?.object ?? \"\"); } catch (e) { return \"\"; } })() }}",
+              "rightValue": "whatsapp_business_account",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cl",
+              "leftValue": "={{ (() => { try { const r = String($(\"Resolve Meta Clinic\").first().json.clinic_id ?? \"\"); return r !== \"\" && r === String($(\"Validate & Normalize\").first().json.clinic_id); } catch (e) { return false; } })() }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "to",
+              "leftValue": "={{ String($(\"Validate & Normalize\").first().json.whatsapp_id ?? \"\") }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0f10d548-bdd6-49d2-af55-089e97d8a1d5",
+      "name": "Is Meta WhatsApp?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4496,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v22.0/{{ encodeURIComponent(String($(\"Inbound Message\").first().json.body.entry[0].changes[0].value.metadata.phone_number_id)) }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: \"whatsapp\", to: String($(\"Validate & Normalize\").first().json.whatsapp_id), type: \"text\", text: { body: String($(\"Compose Reply\").first().json.reply ?? \"\") } }) }}",
+        "options": {}
+      },
+      "id": "f5ee3b8e-da37-4431-ac15-42a774d7de69",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4736,
+        384
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "9P6lB1fVaZSJHuGG",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $(\"Compose Reply\").first().json;\nlet sendFailure = null;\ntry {\n  const f = $(\"Flag WhatsApp Send Failure\").first()?.json;\n  if (f && f.whatsapp_send_ok === false) {\n    sendFailure = f;\n  }\n} catch (e) {\n  // Not routed through failure\n}\n\nif (sendFailure) {\n  return [{\n    json: {\n      ok: false,\n      code: \"WHATSAPP_SEND_FAILED\",\n      reply: c.reply,\n      error: sendFailure.whatsapp_send_error\n    }\n  }];\n}\n\nlet realWamid = null;\ntry {\n  const sendRes = $(\"Send WhatsApp Reply\").first()?.json;\n  if (sendRes && Array.isArray(sendRes.messages) && sendRes.messages[0]?.id) {\n    realWamid = sendRes.messages[0].id;\n  }\n} catch (e) {\n  // Non-WhatsApp or not executed\n}\n\nreturn [{\n  json: {\n    ok: c.ok,\n    code: c.code,\n    reply: c.reply,\n    provider_message_id: realWamid || undefined\n  }\n}];"
+      },
+      "id": "cbe85820-2910-4839-8dfc-58434ffa7423",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ok",
+              "name": "whatsapp_send_ok",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "err",
+              "name": "whatsapp_send_error",
+              "value": "={{ JSON.stringify($json.error ?? $json) }}",
+              "type": "string"
+            },
+            {
+              "id": "ev",
+              "name": "event_id",
+              "value": "={{ $(\"Compose Reply\").first().json.event_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "171bc035-2105-421b-a4fd-d16e4df09e9a",
+      "name": "Flag WhatsApp Send Failure",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5008,
+        240
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "ee36856b-4844-415b-a9a2-dfcf73906c08",
+      "name": "Respond Reply",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        5280,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.book_appointment($1::uuid, NULLIF($2, '')::uuid, $3::uuid, $4::uuid, $5::timestamptz, convert_from(decode($6,'base64'),'UTF8')::jsonb) AS fn",
+        "options": {
+          "queryReplacement": "={{ [$json.clinic_id, $json.slots.dentist_id ?? \"\", $json.patient_id, $json.slots.service_id, $json.slots.starts_at, $json.book_meta_b64].join(\",\") }}"
+        }
+      },
+      "id": "10497c90-8a5e-417b-b209-e7bf7a49b71a",
+      "name": "DB Book",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3296,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? null;\nconst d = r && r.data ? r.data : {};\nif (r && r.ok === true && d.appointment_id && d.confirmation_code) {\n  return [{ json: r }];\n}\nif (r && r.ok === false) {\n  return [{ json: { ok: false, code: r.code === 'CONFLICT' || r.code === 'VALIDATION' ? r.code : 'DB_FAILURE', message: String(r.message ?? 'booking failed') } }];\n}\nreturn [{ json: { ok: false, code: 'DB_FAILURE', message: 'unexpected booking result' } }];"
+      },
+      "id": "2d48c002-6fad-49c6-b370-50b8791d0666",
+      "name": "F Book",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (SELECT string_to_array(convert_from(decode($1,'base64'),'UTF8'),'|') v) SELECT api.reschedule_appointment(a.v[1]::uuid, a.v[2]::uuid, a.v[3]::timestamptz, NULL, a.v[4]) AS fn FROM a",
+        "options": {
+          "queryReplacement": "={{ $json.reschedule_pack }}"
+        }
+      },
+      "id": "4b239a5c-ac74-4286-b3d6-89892f1e9160",
+      "name": "DB Reschedule",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3296,
+        608
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? $json;\n// reschedule_appointment creates a NEW successor appointment and marks the old one 'rescheduled'.\n// Success data shape: { old_appointment_id, new_appointment_id, new_confirmation_code, new_starts_at }.\nif (r && r.ok === true && r.data) {\n  r.data = {\n    ...r.data,\n    starts_at: r.data.new_starts_at ?? r.data.starts_at,\n    confirmation_code: r.data.new_confirmation_code ?? r.data.confirmation_code\n  };\n}\nreturn [{ json: r }];"
+      },
+      "id": "bbedafd3-0d20-4c80-ac13-31ec789f9067",
+      "name": "F Reschedule",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (SELECT string_to_array($1,'|') v) SELECT api.get_appointment(a.v[1]::uuid, NULLIF(a.v[2],'')::uuid, NULLIF(a.v[3],'')::uuid, NULLIF(a.v[4],'')) AS fn FROM a",
+        "options": {
+          "queryReplacement": "={{ $json.lookup_pack }}"
+        }
+      },
+      "id": "1a85fa44-7930-4aec-9129-54a90353d48c",
+      "name": "DB Lookup",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3264,
+        656
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? $json;\n// 'Resolve Slots' executed upstream of every path that reaches this\n// node, so its output is guaranteed available.\nconst v = $('Resolve Slots').first().json;\nif (r.ok === false) {\n  return [{ json: { ok: false, code: r.code ?? 'NOT_FOUND', message: r.message ?? 'appointment not found', lookup_failed: true, cancel_failed: v.action === 'lookup_then_cancel' || v.action === 'cancel' } }];\n}\nconst cancel_pack = [v.clinic_id, r?.data?.id ?? '', 'patient-request-via-chat', 'chat'].join(',');\nconst reschedule_pack = Buffer.from([v.clinic_id, r?.data?.id ?? '', v.slots?.starts_at ?? '', 'chat'].join('|'), 'utf8').toString('base64');\nreturn [{ json: { ...r, cancel_pack, reschedule_pack } }];"
+      },
+      "id": "105e012f-76dd-409e-a3dc-ac7e95a8fd75",
+      "name": "F Lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3456,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ ['lookup_then_cancel','cancel'].includes($('Resolve Slots').first().json.action) && $json.ok === true && !!$json.data?.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "ca8a7099-6b5b-443b-96f1-9e840657fff5",
+      "name": "Should Cancel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3488,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.cancel_appointment($1::uuid, $2::uuid, $3, $4) AS fn",
+        "options": {
+          "queryReplacement": "={{ $json.cancel_pack }}"
+        }
+      },
+      "id": "e36bf498-b7f9-480a-8427-deeef81fdf72",
+      "name": "DB Cancel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3296,
+        464
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? $json;\nreturn [{ json: r }];"
+      },
+      "id": "a9f7fdff-ed27-411c-aa82-ec7c3a4d70a3",
+      "name": "F Cancel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.create_handoff($1::uuid, $2::api.channel_type, convert_from(decode($3,'base64'),'UTF8'), 'normal', NULLIF($4,'')::uuid, NULLIF($5,'')::uuid, convert_from(decode($6,'base64'),'UTF8')::jsonb) AS fn",
+        "options": {
+          "queryReplacement": "={{ [$json.clinic_id, $json.channel, $json.handoff_reason_b64, $json.conversation_id ?? \"\", $json.patient_id ?? \"\", $json.handoff_ctx_b64].join(\",\") }}"
+        }
+      },
+      "id": "1d975f88-1a5b-4b20-bbd1-b830b1df9964",
+      "name": "DB Handoff",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3296,
+        1056
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? $json;\nreturn [{ json: r }];"
+      },
+      "id": "608c3197-9665-40ea-9386-eb4126a2614b",
+      "name": "F Handoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH a AS (SELECT string_to_array($1,'|') v) SELECT api.get_appointment(a.v[1]::uuid, NULLIF(a.v[2],'')::uuid, NULLIF(a.v[3],'')::uuid, NULLIF(a.v[4],'')) AS fn FROM a",
+        "options": {
+          "queryReplacement": "={{ $json.lookup_pack }}"
+        }
+      },
+      "id": "13c81f78-756f-496b-b70c-7d60ef92b419",
+      "name": "DB Lookup Reschedule",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3296,
+        1216
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAyjP1k4uEHKRrEh",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.fn ?? $json;\n// Resolve Slots executed upstream of this node on every path.\nconst v = $('Resolve Slots').first().json;\nif (r.ok === false) {\n  return [{ json: { ok: false, code: r.code ?? 'NOT_FOUND', message: r.message ?? 'appointment not found', lookup_failed: true } }];\n}\nconst reschedule_pack = Buffer.from([v.clinic_id, r?.data?.id ?? '', v.slots?.starts_at ?? '', 'chat'].join('|'), 'utf8').toString('base64');\nreturn [{ json: { ...r, reschedule_pack } }];"
+      },
+      "id": "6ce8d637-0c87-4bdf-b119-495116185b27",
+      "name": "F Lookup Reschedule",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        1568
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ ['lookup_then_reschedule','reschedule'].includes($('Resolve Slots').first().json.action) && $json.ok === true && !!$json.data?.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "27d39c58-d4ec-4ae5-8a0c-0580b7cd0b77",
+      "name": "Should Reschedule?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3744,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, code: \"OK\", reply: \"Sorry, I couldn't verify your contact details. Could you share your name and a phone number so we can reach you?\" } }}",
+        "options": {}
+      },
+      "id": "5e6baf56-bba8-4159-8109-3bbc1347fbe6",
+      "name": "Respond Patient Clarify",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        3376,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, code: \"OK\", reply: $(\"Validate & Normalize\").first().json.contact_ask ?? \"Sure — may I have your name and a phone number to reach you on?\" } }}",
+        "options": {}
+      },
+      "id": "c7e93e4f-1c0f-4a5c-98c9-cda7b844bdd2",
+      "name": "Respond Contact Clarify",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2704,
+        1296
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, code: \"DB_FAILURE\", message: \"Sorry, I couldn't process that request right now.\" } }}",
+        "options": {
+          "responseCode": 503
+        }
+      },
+      "id": "33f386bf-331d-4e76-a460-51634af8f276",
+      "name": "Respond Event Failure",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2304,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, code: ($json.fn ?? $json).code ?? \"NOT_FOUND\", message: ($json.fn ?? $json).message ?? \"clinic not found\" } }}",
+        "options": {
+          "responseCode": "={{ $(\"Validate & Normalize\").first().json.provider === \"meta_whatsapp\" ? 200 : 400 }}"
+        }
+      },
+      "id": "0bc902c4-4673-4432-961e-2b11fc795ac9",
+      "name": "Respond Unknown Clinic",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2560,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, code: \"VALIDATION\", message: \"Sorry, I couldn't process that request right now.\" } }}",
+        "options": {
+          "responseCode": "={{ $json.provider === \"meta_whatsapp\" ? 200 : 400 }}"
+        }
+      },
+      "id": "227ed355-97a8-4afc-901c-02ec33d71aa2",
+      "name": "Respond Invalid Input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2112,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, code: \"NOT_FOUND\", message: \"No active clinic is configured for this WhatsApp number.\" } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c65774b1-1ae2-442c-9f2d-9efedbbd7cd9",
+      "name": "Respond Unmapped Meta Number",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1248,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, code: \"UNAUTHORIZED\" } }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "7c32da3c-d873-494c-b1e6-57d9559dc4e0",
+      "name": "Respond Invalid Signature",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1216,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dental/internal-test",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "12bf9dde-ef50-4171-941a-c55edd54282f",
+      "name": "Internal Test Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        864,
+        752
+      ],
+      "webhookId": "f01fac8a-3de1-4277-bf62-32cb8af2ddbf",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RxEnHyX9AE7WfMWK",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inbound = $input.first().json;\nconst b = inbound.body && typeof inbound.body === 'object' ? inbound.body : {};\nconst clinicId = typeof b.clinic_id === 'string' ? b.clinic_id.trim() : '';\nreturn [{ json: { headers: inbound.headers, params: inbound.params, query: inbound.query, body: Object.assign({}, b, { clinic_id: clinicId, channel: 'web_chat', provider: 'internal_test' }) } }];"
+      },
+      "id": "7e10453c-3694-44f1-afb1-8431b3e967a1",
+      "name": "Prepare Internal Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        896
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "demo",
+              "leftValue": "={{ String($json.body?.clinic_id ?? \"\").trim().toLowerCase() }}",
+              "rightValue": "00000000-0000-0000-0000-000000000001",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "41c04367-977b-4f48-abb4-c5c1d573b20c",
+      "name": "Authorized Test Clinic?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, code: \"FORBIDDEN\", message: \"clinic not authorized for test requests\" } }}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "5141ab88-b667-4623-8ffb-3193908011a0",
+      "name": "Respond Forbidden Clinic",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1776,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "path": "dental/inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "74094106-a9d5-43da-a7a6-e2e6d25187ac",
+      "name": "Meta Webhook Verification",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        1360
+      ],
+      "webhookId": "df7370fe-97b7-4102-bd78-c59dc5cd50ca"
+    },
+    {
+      "parameters": {
+        "jsCode": "const q = $json.query ?? {};\n\nconst valid =\n  q['hub.mode'] === 'subscribe' &&\n  q['hub.verify_token'] === '9248297059fdb3e1e2778cba0718985a3595a1d2e7d4a2647c95756fc5b3a580' &&\n  typeof q['hub.challenge'] === 'string';\n\nreturn [{\n  json: {\n    status: valid ? 200 : 403,\n    body: valid ? q['hub.challenge'] : 'Forbidden'\n  }\n}];"
+      },
+      "id": "220b71cb-5f3e-4514-b3bd-c59bc65218cf",
+      "name": "Meta Verify Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        1360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "eb093e45-04e0-408c-bd77-9f1f8ce2601e",
+      "name": "Meta Verify Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        448,
+        1360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "clinic-resolved-check",
+              "leftValue": "={{ String($json.clinic_id ?? \"\").trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b4e444ef-b7f5-429a-83ec-291ab9eb3a3b",
+      "name": "Meta Clinic Resolved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1376,
+        704
+      ],
+      "alwaysOutputData": false
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Inbound Message": {
+      "main": [
+        [
+          {
+            "node": "Is Meta Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Meta Request?": {
+      "main": [
+        [
+          {
+            "node": "Compute Meta Signature",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Meta Signature": {
+      "main": [
+        [
+          {
+            "node": "Check Meta Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Meta Signature": {
+      "main": [
+        [
+          {
+            "node": "Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Has Phone Number ID?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Phone Number ID?": {
+      "main": [
+        [
+          {
+            "node": "Resolve Meta Clinic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unmapped Meta Number",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Meta Clinic": {
+      "main": [
+        [
+          {
+            "node": "Meta Clinic Resolved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta WhatsApp Adapter": {
+      "main": [
+        [
+          {
+            "node": "Validate & Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Normalize": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Clinic Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clinic Check": {
+      "main": [
+        [
+          {
+            "node": "Clinic Known?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clinic Known?": {
+      "main": [
+        [
+          {
+            "node": "Register Inbound Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unknown Clinic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Inbound Event": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate Guard": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Event Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Respond Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contact Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact Ready?": {
+      "main": [
+        [
+          {
+            "node": "Find Patient",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Contact Clarify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Patient": {
+      "main": [
+        [
+          {
+            "node": "F Find Patient",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F Find Patient": {
+      "main": [
+        [
+          {
+            "node": "Patient Ok?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Patient Ok?": {
+      "main": [
+        [
+          {
+            "node": "Get Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Patient Clarify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Conversation": {
+      "main": [
+        [
+          {
+            "node": "Log Inbound Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Inbound Message": {
+      "main": [
+        [
+          {
+            "node": "Semantic Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Semantic Intent": {
+      "main": [
+        [
+          {
+            "node": "Extract Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Intent": {
+      "main": [
+        [
+          {
+            "node": "Clinic Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clinic Context": {
+      "main": [
+        [
+          {
+            "node": "Resolve Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Slots": {
+      "main": [
+        [
+          {
+            "node": "Route Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Intent": {
+      "main": [
+        [
+          {
+            "node": "DB Availability",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Book",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Reschedule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Lookup Reschedule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Availability": {
+      "main": [
+        [
+          {
+            "node": "F Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F Availability": {
+      "main": [
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Reply": {
+      "main": [
+        [
+          {
+            "node": "Log Outbound Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Outbound Message": {
+      "main": [
+        [
+          {
+            "node": "Mark Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Processed": {
+      "main": [
+        [
+          {
+            "node": "Is Meta WhatsApp?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Meta WhatsApp?": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Reply": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag WhatsApp Send Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag WhatsApp Send Failure": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Book": {
+      "main": [
+        [
+          {
+            "node": "F Book",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F Book": {
+      "main": [
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Reschedule": {
+      "main": [
+        [
+          {
+            "node": "F Reschedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F Reschedule": {
+      "main": [
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Lookup": {
+      "main": [
+        [
+          {
+            "node": "F Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F Lookup": {
+      "main": [
+        [
+          {
+            "node": "Should Cancel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Cancel?": {
+      "main": [
+        [
+          {
+            "node": "DB Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Cancel": {
+      "main": [
+        [
+          {
+            "node": "F Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F Cancel": {
+      "main": [
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Handoff": {
+      "main": [
+        [
+          {
+            "node": "F Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F Handoff": {
+      "main": [
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Lookup Reschedule": {
+      "main": [
+        [
+          {
+            "node": "F Lookup Reschedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "F Lookup Reschedule": {
+      "main": [
+        [
+          {
+            "node": "Should Reschedule?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Reschedule?": {
+      "main": [
+        [
+          {
+            "node": "DB Reschedule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Internal Test Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Internal Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Internal Request": {
+      "main": [
+        [
+          {
+            "node": "Authorized Test Clinic?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authorized Test Clinic?": {
+      "main": [
+        [
+          {
+            "node": "Validate & Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Forbidden Clinic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Webhook Verification": {
+      "main": [
+        [
+          {
+            "node": "Meta Verify Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Verify Check": {
+      "main": [
+        [
+          {
+            "node": "Meta Verify Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Clinic Resolved?": {
+      "main": [
+        [
+          {
+            "node": "Meta WhatsApp Adapter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unmapped Meta Number",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  },
+  "versionId": "1194c5e1-9a52-4b7a-b9af-7875a775f933",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7d9af18370cbe82b2d4f55f500aa7c968b4e137c6429d3d9196b68254d9d44b2"
+  },
+  "nodeGroups": [
+    {
+      "id": "419f23b4-5f38-41b4-879a-d505a57deeb7",
+      "name": "Meta message intake",
+      "nodeIds": [
+        "e3d707cd-6019-4606-81cc-187dcfc5c6f8",
+        "9d461b63-e62f-4e84-90ac-8e4d232f0b8e",
+        "b4e444ef-b7f5-429a-83ec-291ab9eb3a3b"
+      ],
+      "description": "Converts a Meta WhatsApp webhook into the standard message format, resolving the clinic from its phone number ID"
+    },
+    {
+      "id": "d639ab88-0800-45bc-bbba-d64194b33aea",
+      "name": "Intake",
+      "nodeIds": [
+        "c7254d31-141b-4a90-9cf1-21ce18c39d94",
+        "9689c222-39d5-4514-b2c4-9070b6b2a038",
+        "227ed355-97a8-4afc-901c-02ec33d71aa2",
+        "3368c5d4-7df7-4b74-b8a3-60e34d1ad2cf",
+        "354073b9-311e-45f9-afd8-8b200826453e",
+        "0bc902c4-4673-4432-961e-2b11fc795ac9",
+        "a313dba5-7953-4750-89a8-8cc420142f6a",
+        "2f4eb828-94ac-4864-ac35-a34f60277271"
+      ],
+      "description": "Validate input and clinic, register the event idempotently"
+    },
+    {
+      "id": "7adcfaa4-88c7-4dde-8886-e12ac83cb487",
+      "name": "Resolution",
+      "nodeIds": [
+        "3d5e076e-7cfa-4b19-b9b3-7a8081d1b6ce",
+        "c0df752c-c0cb-4f33-97ca-a43d0c546ef3",
+        "eff30295-9f34-41d4-8e34-3172ee61980a",
+        "c7e93e4f-1c0f-4a5c-98c9-cda7b844bdd2",
+        "af1315a3-e15c-4d92-8ce4-eeef59ba94af",
+        "f06ab6c0-cee7-4488-82bd-0e99ad547393",
+        "2c31d24d-5dd6-4712-8d06-2dfa12199582",
+        "5e6baf56-bba8-4159-8109-3bbc1347fbe6",
+        "6503206e-f520-4625-9fc3-7ab8096c91a7",
+        "11b32d55-a0e4-4862-89ba-994ce9052da1",
+        "0da80bda-a5ab-4aa4-9758-03e10ca4d56e",
+        "d103d727-fb88-4e4c-8876-0b107a1661cb",
+        "1ce17f96-714b-4d6a-932a-e0d8de4b5565",
+        "f51bc1ec-70e8-4d7e-8b5c-11cb6928b949"
+      ],
+      "description": "Stop duplicates, resolve patient, conversation, intent and slots"
+    },
+    {
+      "id": "41a59367-bff3-4d99-b576-c93bc7ed6f7d",
+      "name": "Availability",
+      "nodeIds": [
+        "67b4f1d4-0e3e-4318-b560-d96a298ea3ad",
+        "747f0bc0-ea15-4b2c-9dcf-c0150b3736fc"
+      ],
+      "description": "Open slots"
+    },
+    {
+      "id": "2b0ece6d-770e-49e6-8437-4aeb19e05c87",
+      "name": "Booking",
+      "nodeIds": [
+        "10497c90-8a5e-417b-b209-e7bf7a49b71a",
+        "2d48c002-6fad-49c6-b370-50b8791d0666"
+      ],
+      "description": "Book appointment"
+    },
+    {
+      "id": "22f67168-0993-4d0c-9ada-e97a360f1157",
+      "name": "Cancellation",
+      "nodeIds": [
+        "e36bf498-b7f9-480a-8427-deeef81fdf72",
+        "a9f7fdff-ed27-411c-aa82-ec7c3a4d70a3"
+      ],
+      "description": "Cancel"
+    },
+    {
+      "id": "89a4a7ba-0440-455d-922b-1384dcef321e",
+      "name": "Lookup",
+      "nodeIds": [
+        "105e012f-76dd-409e-a3dc-ac7e95a8fd75",
+        "ca8a7099-6b5b-443b-96f1-9e840657fff5"
+      ],
+      "description": "Appointment lookup flattening and cancellation gate"
+    },
+    {
+      "id": "85fde1cf-cdea-4367-89d8-5f9aaf9606fe",
+      "name": "Rescheduling",
+      "nodeIds": [
+        "13c81f78-756f-496b-b70c-7d60ef92b419",
+        "6ce8d637-0c87-4bdf-b119-495116185b27",
+        "27d39c58-d4ec-4ae5-8a0c-0580b7cd0b77"
+      ],
+      "description": "Appointment lookup and reschedule gate"
+    },
+    {
+      "id": "4d37cc9c-ed33-4ffd-bbcb-6a9b2f207a02",
+      "name": "Apply Reschedule",
+      "nodeIds": [
+        "4b239a5c-ac74-4286-b3d6-89892f1e9160",
+        "bbedafd3-0d20-4c80-ac13-31ec789f9067"
+      ],
+      "description": "Apply the rescheduled time"
+    },
+    {
+      "id": "3b553090-ebaa-4330-8fac-a38f45338724",
+      "name": "Handoff",
+      "nodeIds": [
+        "1d975f88-1a5b-4b20-bbd1-b830b1df9964",
+        "608c3197-9665-40ea-9386-eb4126a2614b"
+      ],
+      "description": "Human handoff"
+    },
+    {
+      "id": "b474297d-72fa-49d9-b7bc-e4f1e6732590",
+      "name": "Reply",
+      "nodeIds": [
+        "b6d30397-0e01-4397-b0af-d1f5ed5eb549",
+        "0bd2d226-70b3-45a8-b237-5c49bfa18fa8",
+        "6fa4cf57-0b41-4026-b57e-26cdda604d8b"
+      ],
+      "description": "Compose, log, close event"
+    }
+  ],
+  "id": "sNtf0NabwKlAs8E2",
+  "tags": []
+}

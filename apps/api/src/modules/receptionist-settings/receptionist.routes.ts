@@ -21,29 +21,30 @@ receptionistRouter.get('/settings', async (req, res, next) => {
     );
     const clinicName = rows[0]?.name || 'our clinic';
     const s = rows[0]?.settings ?? {};
+    const r = (s.receptionist && typeof s.receptionist === 'object') ? s.receptionist : {};
 
     // Load canonical phone number ID from integration record or settings
     const integration = await whatsAppService.getClinicIntegration(clinicId);
     const canonicalPhoneId = integration?.phoneNumberId || s.phone_number_id || s.whatsapp_phone_number_id || s.meta_phone_number_id || '';
 
     const response = {
-      enabled: s.receptionist_enabled ?? true,
-      greetingMessage: s.greeting_message ?? `Hello! Welcome to ${clinicName}. How can I assist you today?`,
-      tone: s.tone ?? 'professional',
-      bookingEnabled: s.booking_enabled ?? true,
-      handoffEnabled: s.handoff_enabled ?? true,
-      afterHoursBehavior: s.after_hours_behavior ?? 'message',
-      fallbackMessage: s.fallback_message ?? 'I am connecting you with our human team right now. Please hold on.',
-      emergencyPhone: s.emergency_phone ?? '',
+      enabled: s.receptionist_enabled ?? r.enabled ?? true,
+      greetingMessage: s.greeting_message ?? r.welcomeMessage ?? r.greeting_message ?? `Hello! Welcome to ${clinicName}. How can I assist you today?`,
+      tone: s.tone ?? r.tone ?? 'professional',
+      bookingEnabled: s.booking_enabled ?? r.booking_enabled ?? true,
+      handoffEnabled: s.handoff_enabled ?? r.handoff_enabled ?? true,
+      afterHoursBehavior: s.after_hours_behavior ?? r.after_hours_behavior ?? 'message',
+      fallbackMessage: s.fallback_message ?? r.fallback_message ?? r.fallbackMessage ?? 'I am connecting you with our human team right now. Please hold on.',
+      emergencyPhone: s.emergency_phone ?? r.emergency_phone ?? r.emergencyPhone ?? '',
       phoneNumberId: canonicalPhoneId,
       whatsappPhoneNumberId: canonicalPhoneId, // backward-compatible alias
-      pricingNote: s.pricing_note ?? s.pricing ?? '',
-      cancellationPolicy: s.cancellation_policy ?? '',
-      reschedulingPolicy: s.rescheduling_policy ?? '',
-      acceptedInsurance: s.accepted_insurance ?? s.insurance ?? '',
-      preparationInstructions: s.preparation_instructions ?? s.preparation ?? '',
-      quietHours: s.quiet_hours ?? { enabled: false, start: '22:00', end: '08:00' },
-      bookingRules: s.booking_rules ?? { minAdvanceHours: 2, maxAdvanceDays: 60, slotDurationMinutes: 30 },
+      pricingNote: s.pricing_note ?? s.pricing ?? r.pricing_note ?? '',
+      cancellationPolicy: s.cancellation_policy ?? r.cancellation_policy ?? r.cancellationPolicy ?? '',
+      reschedulingPolicy: s.rescheduling_policy ?? r.rescheduling_policy ?? r.reschedulingPolicy ?? '',
+      acceptedInsurance: s.accepted_insurance ?? s.insurance ?? r.accepted_insurance ?? r.acceptedInsurance ?? '',
+      preparationInstructions: s.preparation_instructions ?? s.preparation ?? r.preparation_instructions ?? '',
+      quietHours: s.quiet_hours ?? r.quiet_hours ?? { enabled: false, start: '22:00', end: '08:00' },
+      bookingRules: s.booking_rules ?? r.booking_rules ?? { minAdvanceHours: 2, maxAdvanceDays: 60, slotDurationMinutes: 30 },
       integrationStatus: integration?.status || 'unconfigured',
       hasWhatsAppToken: Boolean(integration?.accessToken),
     };
@@ -91,22 +92,76 @@ receptionistRouter.put('/settings', async (req, res, next) => {
       clinicId
     );
     const settings = rows[0]?.settings ?? {};
+    if (!settings.receptionist || typeof settings.receptionist !== 'object') {
+      settings.receptionist = {};
+    }
 
-    if (payload.enabled !== undefined) settings.receptionist_enabled = payload.enabled;
-    if (payload.greetingMessage !== undefined) settings.greeting_message = payload.greetingMessage;
-    if (payload.tone !== undefined) settings.tone = payload.tone;
-    if (payload.bookingEnabled !== undefined) settings.booking_enabled = payload.bookingEnabled;
-    if (payload.handoffEnabled !== undefined) settings.handoff_enabled = payload.handoffEnabled;
-    if (payload.afterHoursBehavior !== undefined) settings.after_hours_behavior = payload.afterHoursBehavior;
-    if (payload.fallbackMessage !== undefined) settings.fallback_message = payload.fallbackMessage;
-    if (payload.emergencyPhone !== undefined) settings.emergency_phone = payload.emergencyPhone;
-    if (payload.cancellationPolicy !== undefined) settings.cancellation_policy = payload.cancellationPolicy;
-    if (payload.reschedulingPolicy !== undefined) settings.rescheduling_policy = payload.reschedulingPolicy;
-    if (payload.acceptedInsurance !== undefined) settings.accepted_insurance = payload.acceptedInsurance;
-    if (payload.preparationInstructions !== undefined) settings.preparation_instructions = payload.preparationInstructions;
-    if (payload.pricingNote !== undefined) settings.pricing_note = payload.pricingNote;
-    if (payload.quietHours !== undefined) settings.quiet_hours = payload.quietHours;
-    if (payload.bookingRules !== undefined) settings.booking_rules = payload.bookingRules;
+    if (payload.enabled !== undefined) {
+      settings.receptionist_enabled = payload.enabled;
+      settings.receptionist.enabled = payload.enabled;
+    }
+    if (payload.greetingMessage !== undefined) {
+      settings.greeting_message = payload.greetingMessage;
+      settings.receptionist.welcomeMessage = payload.greetingMessage;
+      settings.receptionist.greeting_message = payload.greetingMessage;
+    }
+    if (payload.tone !== undefined) {
+      settings.tone = payload.tone;
+      settings.receptionist.tone = payload.tone;
+    }
+    if (payload.bookingEnabled !== undefined) {
+      settings.booking_enabled = payload.bookingEnabled;
+      settings.receptionist.booking_enabled = payload.bookingEnabled;
+    }
+    if (payload.handoffEnabled !== undefined) {
+      settings.handoff_enabled = payload.handoffEnabled;
+      settings.receptionist.handoff_enabled = payload.handoffEnabled;
+    }
+    if (payload.afterHoursBehavior !== undefined) {
+      settings.after_hours_behavior = payload.afterHoursBehavior;
+      settings.receptionist.after_hours_behavior = payload.afterHoursBehavior;
+    }
+    if (payload.fallbackMessage !== undefined) {
+      settings.fallback_message = payload.fallbackMessage;
+      settings.receptionist.fallback_message = payload.fallbackMessage;
+      settings.receptionist.fallbackMessage = payload.fallbackMessage;
+    }
+    if (payload.emergencyPhone !== undefined) {
+      settings.emergency_phone = payload.emergencyPhone;
+      settings.receptionist.emergency_phone = payload.emergencyPhone;
+      settings.receptionist.emergencyPhone = payload.emergencyPhone;
+    }
+    if (payload.cancellationPolicy !== undefined) {
+      settings.cancellation_policy = payload.cancellationPolicy;
+      settings.receptionist.cancellation_policy = payload.cancellationPolicy;
+      settings.receptionist.cancellationPolicy = payload.cancellationPolicy;
+    }
+    if (payload.reschedulingPolicy !== undefined) {
+      settings.rescheduling_policy = payload.reschedulingPolicy;
+      settings.receptionist.rescheduling_policy = payload.reschedulingPolicy;
+      settings.receptionist.reschedulingPolicy = payload.reschedulingPolicy;
+    }
+    if (payload.acceptedInsurance !== undefined) {
+      settings.accepted_insurance = payload.acceptedInsurance;
+      settings.receptionist.accepted_insurance = payload.acceptedInsurance;
+      settings.receptionist.acceptedInsurance = payload.acceptedInsurance;
+    }
+    if (payload.preparationInstructions !== undefined) {
+      settings.preparation_instructions = payload.preparationInstructions;
+      settings.receptionist.preparation_instructions = payload.preparationInstructions;
+    }
+    if (payload.pricingNote !== undefined) {
+      settings.pricing_note = payload.pricingNote;
+      settings.receptionist.pricing_note = payload.pricingNote;
+    }
+    if (payload.quietHours !== undefined) {
+      settings.quiet_hours = payload.quietHours;
+      settings.receptionist.quiet_hours = payload.quietHours;
+    }
+    if (payload.bookingRules !== undefined) {
+      settings.booking_rules = payload.bookingRules;
+      settings.receptionist.booking_rules = payload.bookingRules;
+    }
 
     // Handle Phone Number ID persistence and uniqueness validation
     const rawPhoneId = payload.phoneNumberId !== undefined ? payload.phoneNumberId : payload.whatsappPhoneNumberId;
