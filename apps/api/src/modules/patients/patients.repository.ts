@@ -6,30 +6,48 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '@dental/shared';
 import { logger } from '../../config/logger';
 
 let cachedPatientColumns: Set<string> | null = null;
+let lastColumnCheck = 0;
+
 export async function getPatientColumns(): Promise<Set<string>> {
-  if (cachedPatientColumns) return cachedPatientColumns;
+  const now = Date.now();
+  if (cachedPatientColumns && cachedPatientColumns.has('is_archived')) {
+    return cachedPatientColumns;
+  }
+  if (cachedPatientColumns && (now - lastColumnCheck) < 5000) {
+    return cachedPatientColumns;
+  }
   try {
     const cols = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
       `SELECT column_name FROM information_schema.columns WHERE table_schema = 'api' AND table_name = 'patients'`
     );
     cachedPatientColumns = new Set(cols.map((c) => c.column_name));
+    lastColumnCheck = now;
   } catch {
-    cachedPatientColumns = new Set([
-      'id', 'clinic_id', 'full_name', 'phone', 'email', 'whatsapp_id',
-      'date_of_birth', 'consent_whatsapp', 'notes', 'created_at', 'updated_at',
-    ]);
+    if (!cachedPatientColumns) {
+      cachedPatientColumns = new Set([
+        'id', 'clinic_id', 'full_name', 'phone', 'email', 'whatsapp_id',
+        'date_of_birth', 'consent_whatsapp', 'notes', 'created_at', 'updated_at',
+      ]);
+    }
   }
   return cachedPatientColumns;
 }
 
 let hasPatientAuditTable: boolean | null = null;
+let lastAuditTableCheck = 0;
+
 async function checkPatientAuditTable(): Promise<boolean> {
-  if (hasPatientAuditTable !== null) return hasPatientAuditTable;
+  const now = Date.now();
+  if (hasPatientAuditTable === true) return true;
+  if (hasPatientAuditTable !== null && (now - lastAuditTableCheck) < 5000) {
+    return hasPatientAuditTable;
+  }
   try {
     const res = await prisma.$queryRawUnsafe<any[]>(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'api' AND table_name = 'patient_audit_events'`
     );
     hasPatientAuditTable = res.length > 0;
+    lastAuditTableCheck = now;
   } catch {
     hasPatientAuditTable = false;
   }
