@@ -1186,6 +1186,21 @@ class ApiClient {
     return this.request<any>('/receptionist/settings');
   }
 
+  public async updateReceptionistStatus(enabled: boolean) {
+    if (this.demoMode) {
+      return demoStore.updateReceptionistStatus(enabled);
+    }
+    return this.request<{
+      clinicId: string;
+      enabled: boolean;
+      status: 'ACTIVE' | 'PAUSED';
+      updatedAt: string;
+    }>('/receptionist/status', {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
   public async updateReceptionistSettings(settings: any) {
     if (this.demoMode) {
       return demoStore.updateReceptionistSettings(settings);
@@ -1194,6 +1209,27 @@ class ApiClient {
       method: 'PUT',
       body: JSON.stringify(settings),
     });
+  }
+
+  public async getReceptionistDispatchAuth() {
+    if (this.demoMode) {
+      return {
+        clinicId: 'demo-clinic',
+        receptionistEnabled: demoStore.getReceptionistSettings().enabled !== false,
+        isClinicActive: true,
+        integrationEnabled: true,
+        canDispatch: demoStore.getReceptionistSettings().enabled !== false,
+        reason: demoStore.getReceptionistSettings().enabled !== false ? 'authorized' : 'receptionist_paused',
+      };
+    }
+    return this.request<{
+      clinicId: string;
+      receptionistEnabled: boolean;
+      isClinicActive: boolean;
+      integrationEnabled: boolean;
+      canDispatch: boolean;
+      reason: string;
+    }>('/receptionist/dispatch-auth');
   }
 
   // --- WhatsApp Cloud API Integration ---

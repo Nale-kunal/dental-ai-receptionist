@@ -1249,11 +1249,30 @@ export class DemoStore {
     return JSON.parse(JSON.stringify(this.data.receptionistSettings));
   }
 
+  public updateReceptionistStatus(enabled: boolean): any {
+    this.data.receptionistSettings = {
+      ...this.data.receptionistSettings,
+      enabled,
+      receptionist_enabled: enabled,
+    };
+    return {
+      clinicId: this.data.clinic.id,
+      enabled,
+      status: enabled ? 'ACTIVE' : 'PAUSED',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   public updateReceptionistSettings(settings: any): any {
+    const currentEnabled = this.data.receptionistSettings.enabled;
     this.data.receptionistSettings = {
       ...this.data.receptionistSettings,
       ...settings,
     };
+    if (settings.enabled === undefined) {
+      this.data.receptionistSettings.enabled = currentEnabled;
+      this.data.receptionistSettings.receptionist_enabled = currentEnabled;
+    }
     return this.getReceptionistSettings();
   }
 

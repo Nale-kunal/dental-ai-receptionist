@@ -5,10 +5,50 @@ import { getAuthenticatedClinicId } from '../../middleware/authorization/tenantS
 import { sendSuccess } from '../../utils/response';
 import { whatsAppService } from '../../services/whatsapp.service';
 import { maskSecret } from '../../utils/encryption';
+import { NotFoundError } from '../../middleware/errors/errorHandler';
 import { z } from 'zod';
 
 export const receptionistRouter = Router();
 receptionistRouter.use(authenticate);
+
+/**
+ * Canonical helper to resolve receptionist enabled status.
+ * Strict Fail-Closed Precedence Rules:
+ * 1. If settings is missing, null, or non-object -> false (fail closed)
+ * 2. If top-level receptionist_enabled is false or 'false' -> false (denied)
+ * 3. If nested receptionist.enabled is false or 'false' -> false (denied)
+ * 4. Contradictory check: If either canonical key is false, immediately denied
+ * 5. Malformed string check: If any present canonical key is not boolean/boolean-string -> false (denied)
+ * 6. Authorized ONLY when at least one canonical key is explicitly true AND neither is false/malformed
+ * 7. Missing, null, unconfigured, or unknown status -> false (strict fail closed)
+ */
+export function resolveReceptionistEnabled(settings: any): boolean {
+  if (!settings || typeof settings !== 'object') return false;
+
+  const top = settings.receptionist_enabled;
+  const nested = (settings.receptionist && typeof settings.receptionist === 'object') ? settings.receptionist.enabled : undefined;
+
+  // 1. Explicit denial on false or "false" (fails closed)
+  if (top === false || top === 'false') return false;
+  if (nested === false || nested === 'false') return false;
+
+  // 2. Validate boolean values; malformed strings (e.g. 'active', 'yes', '1') fail closed
+  const isTopTrue = (top === true || top === 'true');
+  const isNestedTrue = (nested === true || nested === 'true');
+
+  const isTopValid = isTopTrue || top === undefined || top === null;
+  const isNestedValid = isNestedTrue || nested === undefined || nested === null;
+
+  if (!isTopValid || !isNestedValid) return false;
+
+  // 3. Authorized ONLY when at least one canonical key is explicitly true
+  if (isTopTrue || isNestedTrue) {
+    return true;
+  }
+
+  // 4. Missing, null, or unknown status strictly fails closed
+  return false;
+}
 
 // ─── General Receptionist Settings ──────────────────────────────────────────
 
@@ -28,7 +68,7 @@ receptionistRouter.get('/settings', async (req, res, next) => {
     const canonicalPhoneId = integration?.phoneNumberId || s.phone_number_id || s.whatsapp_phone_number_id || s.meta_phone_number_id || '';
 
     const response = {
-      enabled: s.receptionist_enabled ?? r.enabled ?? true,
+      enabled: resolveReceptionistEnabled(s),
       greetingMessage: s.greeting_message ?? r.welcomeMessage ?? r.greeting_message ?? `Hello! Welcome to ${clinicName}. How can I assist you today?`,
       tone: s.tone ?? r.tone ?? 'professional',
       bookingEnabled: s.booking_enabled ?? r.booking_enabled ?? true,
@@ -50,6 +90,125 @@ receptionistRouter.get('/settings', async (req, res, next) => {
     };
 
     sendSuccess(res, response);
+  } catch (e) { next(e); }
+});
+
+const updateStatusSchema = z.object({
+  enabled: z.boolean({ required_error: 'enabled boolean is required' }),
+});
+
+// Dedicated atomic status toggle endpoint for instant persistence
+receptionistRouter.patch('/status', async (req, res, next) => {
+  try {
+    const clinicId = getAuthenticatedClinicId(req);
+    const parsed = updateStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: parsed.error.errors[0]?.message || 'Invalid status payload. Expected { enabled: boolean }',
+      });
+    }
+
+    const { enabled } = parsed.data;
+
+    // Atomic update using jsonb_set in PostgreSQL: eliminates read-modify-write lost-update race conditions
+    // Touches strictly receptionist_enabled and receptionist.enabled, preserving all unrelated settings
+    const updatedRows = await prisma.$queryRawUnsafe<any[]>(
+      `UPDATE api.clinics
+       SET settings = jsonb_set(
+             jsonb_set(
+               COALESCE(settings, '{}'::jsonb) || jsonb_build_object('receptionist', COALESCE(settings->'receptionist', '{}'::jsonb)),
+               '{receptionist_enabled}',
+               to_jsonb($2::boolean),
+               true
+             ),
+             '{receptionist,enabled}',
+             to_jsonb($2::boolean),
+             true
+           ),
+           updated_at = NOW()
+       WHERE id = $1::uuid
+       RETURNING settings`,
+      clinicId,
+      enabled
+    );
+
+    if (!updatedRows || updatedRows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        code: 'CLINIC_NOT_FOUND',
+        message: 'Clinic not found',
+      });
+    }
+
+    sendSuccess(res, {
+      clinicId,
+      enabled,
+      status: enabled ? 'ACTIVE' : 'PAUSED',
+      updatedAt: new Date().toISOString(),
+    }, enabled ? 'Automated receptionist activated' : 'Automated receptionist paused');
+  } catch (e) { next(e); }
+});
+
+// Real-time dispatch authorization check endpoint (fails closed)
+receptionistRouter.get('/dispatch-auth', async (req, res, next) => {
+  try {
+    const clinicId = getAuthenticatedClinicId(req);
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT 
+         c.id AS clinic_id,
+         (c.active IS TRUE) AS active,
+         c.suspended_at,
+         CASE
+           WHEN NOT (c.active IS TRUE) OR c.suspended_at IS NOT NULL THEN false
+           WHEN (c.settings->>'receptionist_enabled') = 'false' THEN false
+           WHEN (c.settings->'receptionist'->>'enabled') = 'false' THEN false
+           WHEN (
+             ((c.settings->>'receptionist_enabled') = 'true' OR (c.settings->'receptionist'->>'enabled') = 'true')
+             AND ((c.settings->>'receptionist_enabled') IS NULL OR (c.settings->>'receptionist_enabled') = 'true')
+             AND ((c.settings->'receptionist'->>'enabled') IS NULL OR (c.settings->'receptionist'->>'enabled') = 'true')
+           ) THEN true
+           ELSE false
+         END AS receptionist_enabled,
+         COALESCE(i.enabled, false) AS integration_enabled,
+         i.status AS integration_status
+       FROM api.clinics c
+       LEFT JOIN api.clinic_whatsapp_integrations i ON i.clinic_id = c.id
+       WHERE c.id = $1::uuid`,
+      clinicId
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        code: 'CLINIC_NOT_FOUND',
+        canDispatch: false,
+        receptionistEnabled: false,
+        message: 'Clinic not found',
+      });
+    }
+
+    const row = rows[0];
+    const isClinicActive = Boolean(row.active === true && !row.suspended_at);
+    const receptionistEnabled = Boolean(row.receptionist_enabled === true);
+    const integrationEnabled = Boolean(row.integration_enabled === true);
+    const canDispatch = isClinicActive && receptionistEnabled && integrationEnabled;
+
+    sendSuccess(res, {
+      clinicId,
+      receptionistEnabled,
+      isClinicActive,
+      integrationEnabled,
+      canDispatch,
+      reason: !isClinicActive
+        ? 'clinic_inactive'
+        : !receptionistEnabled
+        ? 'receptionist_paused'
+        : !integrationEnabled
+        ? 'integration_disabled'
+        : 'authorized',
+    });
   } catch (e) { next(e); }
 });
 
@@ -87,86 +246,11 @@ receptionistRouter.put('/settings', async (req, res, next) => {
 
     const payload = parsed.data;
 
-    const rows = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT settings FROM api.clinics WHERE id = $1::uuid`,
-      clinicId
-    );
-    const settings = rows[0]?.settings ?? {};
-    if (!settings.receptionist || typeof settings.receptionist !== 'object') {
-      settings.receptionist = {};
-    }
-
-    if (payload.enabled !== undefined) {
-      settings.receptionist_enabled = payload.enabled;
-      settings.receptionist.enabled = payload.enabled;
-    }
-    if (payload.greetingMessage !== undefined) {
-      settings.greeting_message = payload.greetingMessage;
-      settings.receptionist.welcomeMessage = payload.greetingMessage;
-      settings.receptionist.greeting_message = payload.greetingMessage;
-    }
-    if (payload.tone !== undefined) {
-      settings.tone = payload.tone;
-      settings.receptionist.tone = payload.tone;
-    }
-    if (payload.bookingEnabled !== undefined) {
-      settings.booking_enabled = payload.bookingEnabled;
-      settings.receptionist.booking_enabled = payload.bookingEnabled;
-    }
-    if (payload.handoffEnabled !== undefined) {
-      settings.handoff_enabled = payload.handoffEnabled;
-      settings.receptionist.handoff_enabled = payload.handoffEnabled;
-    }
-    if (payload.afterHoursBehavior !== undefined) {
-      settings.after_hours_behavior = payload.afterHoursBehavior;
-      settings.receptionist.after_hours_behavior = payload.afterHoursBehavior;
-    }
-    if (payload.fallbackMessage !== undefined) {
-      settings.fallback_message = payload.fallbackMessage;
-      settings.receptionist.fallback_message = payload.fallbackMessage;
-      settings.receptionist.fallbackMessage = payload.fallbackMessage;
-    }
-    if (payload.emergencyPhone !== undefined) {
-      settings.emergency_phone = payload.emergencyPhone;
-      settings.receptionist.emergency_phone = payload.emergencyPhone;
-      settings.receptionist.emergencyPhone = payload.emergencyPhone;
-    }
-    if (payload.cancellationPolicy !== undefined) {
-      settings.cancellation_policy = payload.cancellationPolicy;
-      settings.receptionist.cancellation_policy = payload.cancellationPolicy;
-      settings.receptionist.cancellationPolicy = payload.cancellationPolicy;
-    }
-    if (payload.reschedulingPolicy !== undefined) {
-      settings.rescheduling_policy = payload.reschedulingPolicy;
-      settings.receptionist.rescheduling_policy = payload.reschedulingPolicy;
-      settings.receptionist.reschedulingPolicy = payload.reschedulingPolicy;
-    }
-    if (payload.acceptedInsurance !== undefined) {
-      settings.accepted_insurance = payload.acceptedInsurance;
-      settings.receptionist.accepted_insurance = payload.acceptedInsurance;
-      settings.receptionist.acceptedInsurance = payload.acceptedInsurance;
-    }
-    if (payload.preparationInstructions !== undefined) {
-      settings.preparation_instructions = payload.preparationInstructions;
-      settings.receptionist.preparation_instructions = payload.preparationInstructions;
-    }
-    if (payload.pricingNote !== undefined) {
-      settings.pricing_note = payload.pricingNote;
-      settings.receptionist.pricing_note = payload.pricingNote;
-    }
-    if (payload.quietHours !== undefined) {
-      settings.quiet_hours = payload.quietHours;
-      settings.receptionist.quiet_hours = payload.quietHours;
-    }
-    if (payload.bookingRules !== undefined) {
-      settings.booking_rules = payload.bookingRules;
-      settings.receptionist.booking_rules = payload.bookingRules;
-    }
-
-    // Handle Phone Number ID persistence and uniqueness validation
+    // Handle Phone Number ID persistence and uniqueness validation before transaction
     const rawPhoneId = payload.phoneNumberId !== undefined ? payload.phoneNumberId : payload.whatsappPhoneNumberId;
+    let cleanPhoneId: string | null = null;
     if (rawPhoneId !== undefined) {
-      const cleanPhoneId = rawPhoneId.trim();
+      cleanPhoneId = rawPhoneId.trim();
       if (cleanPhoneId && !/^\d{8,25}$/.test(cleanPhoneId)) {
         return res.status(400).json({
           ok: false,
@@ -192,11 +276,6 @@ receptionistRouter.put('/settings', async (req, res, next) => {
         }
       }
 
-      // Standardize canonical keys
-      settings.phone_number_id = cleanPhoneId || null;
-      settings.whatsapp_phone_number_id = cleanPhoneId || null;
-      settings.meta_phone_number_id = cleanPhoneId || null;
-
       // Persist to dedicated integration table
       await prisma.$queryRawUnsafe(
         `INSERT INTO api.clinic_whatsapp_integrations (clinic_id, phone_number_id, updated_at)
@@ -209,13 +288,107 @@ receptionistRouter.put('/settings', async (req, res, next) => {
       );
     }
 
-    await prisma.$queryRawUnsafe(
-      `UPDATE api.clinics SET settings = $2::jsonb, updated_at = NOW() WHERE id = $1::uuid`,
-      clinicId,
-      JSON.stringify(settings)
-    );
+    // Execute settings update inside a transaction with SELECT ... FOR UPDATE
+    // Row-level lock guarantees serialization with concurrent PATCH /status updates
+    const updatedSettings = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRawUnsafe<any[]>(
+        `SELECT settings FROM api.clinics WHERE id = $1::uuid FOR UPDATE`,
+        clinicId
+      );
+      if (!rows || rows.length === 0) {
+        throw new NotFoundError('Clinic');
+      }
 
-    sendSuccess(res, settings, 'Receptionist settings updated');
+      const settings = rows[0]?.settings ?? {};
+      if (!settings.receptionist || typeof settings.receptionist !== 'object') {
+        settings.receptionist = {};
+      }
+
+      // CRITICAL: Only update receptionist enabled if explicitly provided in payload!
+      // When saving preferences from UI, enabled is omitted to prevent overwriting status toggle
+      if (payload.enabled !== undefined) {
+        settings.receptionist_enabled = payload.enabled;
+        settings.receptionist.enabled = payload.enabled;
+      }
+      if (payload.greetingMessage !== undefined) {
+        settings.greeting_message = payload.greetingMessage;
+        settings.receptionist.welcomeMessage = payload.greetingMessage;
+        settings.receptionist.greeting_message = payload.greetingMessage;
+      }
+      if (payload.tone !== undefined) {
+        settings.tone = payload.tone;
+        settings.receptionist.tone = payload.tone;
+      }
+      if (payload.bookingEnabled !== undefined) {
+        settings.booking_enabled = payload.bookingEnabled;
+        settings.receptionist.booking_enabled = payload.bookingEnabled;
+      }
+      if (payload.handoffEnabled !== undefined) {
+        settings.handoff_enabled = payload.handoffEnabled;
+        settings.receptionist.handoff_enabled = payload.handoffEnabled;
+      }
+      if (payload.afterHoursBehavior !== undefined) {
+        settings.after_hours_behavior = payload.afterHoursBehavior;
+        settings.receptionist.after_hours_behavior = payload.afterHoursBehavior;
+      }
+      if (payload.fallbackMessage !== undefined) {
+        settings.fallback_message = payload.fallbackMessage;
+        settings.receptionist.fallback_message = payload.fallbackMessage;
+        settings.receptionist.fallbackMessage = payload.fallbackMessage;
+      }
+      if (payload.emergencyPhone !== undefined) {
+        settings.emergency_phone = payload.emergencyPhone;
+        settings.receptionist.emergency_phone = payload.emergencyPhone;
+        settings.receptionist.emergencyPhone = payload.emergencyPhone;
+      }
+      if (payload.cancellationPolicy !== undefined) {
+        settings.cancellation_policy = payload.cancellationPolicy;
+        settings.receptionist.cancellation_policy = payload.cancellationPolicy;
+        settings.receptionist.cancellationPolicy = payload.cancellationPolicy;
+      }
+      if (payload.reschedulingPolicy !== undefined) {
+        settings.rescheduling_policy = payload.reschedulingPolicy;
+        settings.receptionist.rescheduling_policy = payload.reschedulingPolicy;
+        settings.receptionist.reschedulingPolicy = payload.reschedulingPolicy;
+      }
+      if (payload.acceptedInsurance !== undefined) {
+        settings.accepted_insurance = payload.acceptedInsurance;
+        settings.receptionist.accepted_insurance = payload.acceptedInsurance;
+        settings.receptionist.acceptedInsurance = payload.acceptedInsurance;
+      }
+      if (payload.preparationInstructions !== undefined) {
+        settings.preparation_instructions = payload.preparationInstructions;
+        settings.receptionist.preparation_instructions = payload.preparationInstructions;
+      }
+      if (payload.pricingNote !== undefined) {
+        settings.pricing_note = payload.pricingNote;
+        settings.receptionist.pricing_note = payload.pricingNote;
+      }
+      if (payload.quietHours !== undefined) {
+        settings.quiet_hours = payload.quietHours;
+        settings.receptionist.quiet_hours = payload.quietHours;
+      }
+      if (payload.bookingRules !== undefined) {
+        settings.booking_rules = payload.bookingRules;
+        settings.receptionist.booking_rules = payload.bookingRules;
+      }
+
+      if (cleanPhoneId !== null) {
+        settings.phone_number_id = cleanPhoneId || null;
+        settings.whatsapp_phone_number_id = cleanPhoneId || null;
+        settings.meta_phone_number_id = cleanPhoneId || null;
+      }
+
+      await tx.$queryRawUnsafe(
+        `UPDATE api.clinics SET settings = $2::jsonb, updated_at = NOW() WHERE id = $1::uuid`,
+        clinicId,
+        JSON.stringify(settings)
+      );
+
+      return settings;
+    });
+
+    sendSuccess(res, updatedSettings, 'Receptionist settings updated');
   } catch (e) { next(e); }
 });
 

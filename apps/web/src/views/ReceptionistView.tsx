@@ -80,6 +80,7 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
   const [settings, setSettings] = useState<any>(null);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [togglingStatus, setTogglingStatus] = useState(false);
 
   // Notify parent of conversation selection for route synchronization
   useEffect(() => {
@@ -734,12 +735,44 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
     }
   }, [activeTab]);
 
+  const handleToggleReceptionistStatus = async (newEnabled: boolean) => {
+    if (togglingStatus || !settings) return;
+    const previousEnabled = Boolean(settings.enabled);
+    setTogglingStatus(true);
+    // Optimistically update the UI toggle
+    setSettings((prev: any) => ({ ...prev, enabled: newEnabled }));
+
+    try {
+      const res = await api.updateReceptionistStatus(newEnabled);
+      // Guarantee UI state matches confirmed backend response
+      setSettings((prev: any) => ({ ...prev, enabled: res.enabled }));
+      toast.success(
+        res.enabled ? 'Receptionist Answering Activated' : 'Receptionist Answering Paused',
+        res.enabled
+          ? 'Automated receptionist answering is now ACTIVE. AI will process incoming patient WhatsApp messages.'
+          : 'Automated receptionist answering is now PAUSED. Incoming patient enquiries will be directed to human staff.'
+      );
+    } catch (err: any) {
+      // Rollback to previous state on failure
+      setSettings((prev: any) => ({ ...prev, enabled: previousEnabled }));
+      toast.error('Status Update Failed', err.message || 'Unable to update automated receptionist status.');
+    } finally {
+      setTogglingStatus(false);
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!settings) return;
     try {
       setSavingSettings(true);
-      await api.updateReceptionistSettings(settings);
+      // Strip enabled from preferences save payload: the toggle has its own atomic PATCH endpoint.
+      // Saving preferences must NEVER overwrite the receptionist ACTIVE/PAUSED state.
+      const { enabled: _ignored, ...preferencesToSave } = settings;
+      const res = await api.updateReceptionistSettings(preferencesToSave);
+      if (res) {
+        setSettings((prev: any) => ({ ...prev, ...res, enabled: prev.enabled }));
+      }
       toast.success('Preferences Saved', 'AI receptionist instructions and policies updated successfully.');
     } catch (err: any) {
       toast.error('Save Failed', err.message);
@@ -1565,12 +1598,13 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                       When paused, incoming patient WhatsApp enquiries will be directed to human staff.
                     </div>
                   </div>
-                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: togglingStatus ? 'wait' : 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={settings.enabled}
-                      onChange={(e) => setSettings({ ...settings, enabled: e.target.checked })}
-                      style={{ width: '18px', height: '18px', accentColor: 'var(--accent-primary)' }}
+                      checked={Boolean(settings.enabled)}
+                      disabled={togglingStatus}
+                      onChange={(e) => handleToggleReceptionistStatus(e.target.checked)}
+                      style={{ width: '18px', height: '18px', accentColor: 'var(--accent-primary)', cursor: togglingStatus ? 'wait' : 'pointer' }}
                     />
                     <span
                       style={{
@@ -1578,9 +1612,10 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                         fontSize: '12px',
                         fontWeight: 600,
                         color: settings.enabled ? 'var(--success)' : 'var(--danger)',
+                        opacity: togglingStatus ? 0.6 : 1,
                       }}
                     >
-                      {settings.enabled ? 'ACTIVE' : 'PAUSED'}
+                      {togglingStatus ? 'UPDATING...' : (settings.enabled ? 'ACTIVE' : 'PAUSED')}
                     </span>
                   </label>
                 </div>
