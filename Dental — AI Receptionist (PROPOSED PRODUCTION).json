@@ -529,8 +529,8 @@
         "modelId": {
           "__rl": true,
           "mode": "list",
-          "value": "models/gemini-3.1-flash-lite",
-          "cachedResultName": "models/gemini-3.1-flash-lite"
+          "value": "models/gemini-1.5-flash",
+          "cachedResultName": "models/gemini-1.5-flash"
         },
         "messages": {
           "values": [

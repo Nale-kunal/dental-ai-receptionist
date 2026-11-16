@@ -1,0 +1,223 @@
+{
+  "name": "Dental — Recovery & Outbox Sweeper (PROPOSED)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "recov-node-0001-0000-0000-000000000001",
+      "name": "Schedule Trigger (Every 60s)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [ 200, 300 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM api.claim_stale_inbound_events('n8n-recovery-sweeper', 60, 5);",
+        "options": {}
+      },
+      "id": "recov-node-0002-0000-0000-000000000002",
+      "name": "Claim Stale Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [ 440, 200 ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond_has_event",
+              "leftValue": "={{ $json.event_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "recov-node-0003-0000-0000-000000000003",
+      "name": "Has Stale Events?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [ 680, 200 ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/dental/internal-test",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-test-key",
+              "value": "recovery-internal-dispatch-key"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "event_id",
+              "value": "={{ $json.event_id }}"
+            },
+            {
+              "name": "clinic_id",
+              "value": "={{ $json.clinic_id }}"
+            },
+            {
+              "name": "fencing_token",
+              "value": "={{ $json.fencing_token }}"
+            },
+            {
+              "name": "is_recovery",
+              "value": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "recov-node-0004-0000-0000-000000000004",
+      "name": "Trigger Receptionist Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 920, 180 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM api.claim_stale_outbox_messages('n8n-outbox-sweeper', 60, 5);",
+        "options": {}
+      },
+      "id": "recov-node-0005-0000-0000-000000000005",
+      "name": "Claim Stale Outbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [ 440, 420 ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond_has_outbox",
+              "leftValue": "={{ $json.outbox_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "recov-node-0006-0000-0000-000000000006",
+      "name": "Has Stale Outbox?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [ 680, 420 ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.phone_number_id ?? 'me' }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $json.whatsapp_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.message_payload) }}",
+        "options": {}
+      },
+      "id": "recov-node-0007-0000-0000-000000000007",
+      "name": "Dispatch Outbox to Meta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 920, 400 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT api.record_outbox_dispatched($1::uuid, $2::bigint, $3, 200) AS fn;",
+        "options": {
+          "queryReplacement": "={{ $json.outbox_id + '|' + $json.fencing_token + '|' + ($json.messages?.[0]?.id ?? 'wamid.DISPATCHED_UNKNOWN') }}"
+        }
+      },
+      "id": "recov-node-0008-0000-0000-000000000008",
+      "name": "Record Outbox Dispatched",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [ 1160, 400 ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Every 60s)": {
+      "main": [
+        [
+          { "node": "Claim Stale Events", "type": "main", "index": 0 },
+          { "node": "Claim Stale Outbox", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Claim Stale Events": {
+      "main": [ [ { "node": "Has Stale Events?", "type": "main", "index": 0 } ] ]
+    },
+    "Has Stale Events?": {
+      "main": [ [ { "node": "Trigger Receptionist Pipeline", "type": "main", "index": 0 } ], [] ]
+    },
+    "Claim Stale Outbox": {
+      "main": [ [ { "node": "Has Stale Outbox?", "type": "main", "index": 0 } ] ]
+    },
+    "Has Stale Outbox?": {
+      "main": [ [ { "node": "Dispatch Outbox to Meta", "type": "main", "index": 0 } ], [] ]
+    },
+    "Dispatch Outbox to Meta": {
+      "main": [ [ { "node": "Record Outbox Dispatched", "type": "main", "index": 0 } ] ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
+

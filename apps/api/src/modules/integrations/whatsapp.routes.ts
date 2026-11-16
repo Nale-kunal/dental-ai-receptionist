@@ -18,6 +18,7 @@ import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import { prisma } from '../../database/prisma/client';
 import { whatsAppService } from '../../services/whatsapp.service';
+import { receptionistService } from '../../services/receptionist.service';
 
 export const integrationsRouter = Router();
 
@@ -392,4 +393,328 @@ integrationsRouter.post('/whatsapp/send', authenticateServiceKey, async (req: Re
     message: sendResult.message,
     data: { retryable: false, idempotency_key },
   });
+});
+
+// ─── Meta WhatsApp Inbound Webhook Handlers ─────────────────────────────────
+
+/**
+ * GET Handler: Meta Webhook Verification Handshake
+ * Responds to Meta verification challenge (hub.mode=subscribe) with hub.challenge.
+ */
+export async function handleWebhookVerification(req: Request, res: Response): Promise<void> {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && typeof challenge === 'string') {
+    const configuredToken = process.env.META_WEBHOOK_VERIFY_TOKEN || env.META_WEBHOOK_VERIFY_TOKEN;
+
+    // Check configured server verify token
+    if (configuredToken && typeof token === 'string' && timingSafeEqualStr(token.trim(), configuredToken.trim())) {
+      logger.info('Meta webhook verification handshake succeeded via server verify token');
+      res.status(200).send(challenge);
+      return;
+    }
+
+    // Also check if any clinic has this verify token in settings
+    if (typeof token === 'string' && token.trim().length > 0) {
+      try {
+        const clinicMatch = await prisma.$queryRawUnsafe<any[]>(
+          `SELECT id FROM api.clinics
+           WHERE settings->>'meta_webhook_verify_token' = $1
+              OR settings->'receptionist'->>'meta_webhook_verify_token' = $1
+           LIMIT 1`,
+          token.trim()
+        );
+        if (clinicMatch && clinicMatch.length > 0) {
+          logger.info('Meta webhook verification handshake succeeded via clinic verify token', { clinicId: clinicMatch[0].id });
+          res.status(200).send(challenge);
+          return;
+        }
+      } catch (err: any) {
+        logger.warn('Error querying clinic verify token during webhook handshake', { error: err.message });
+      }
+    }
+
+    logger.warn('Meta webhook verification rejected: token mismatch', {
+      mode,
+      hasToken: Boolean(token),
+      hasConfiguredToken: Boolean(configuredToken),
+    });
+    res.status(403).json({
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'Invalid verification token',
+    });
+    return;
+  }
+
+  res.status(400).json({
+    ok: false,
+    code: 'BAD_REQUEST',
+    message: 'Invalid verification request parameters. Expected hub.mode=subscribe and hub.challenge.',
+  });
+}
+
+/**
+ * POST Handler: Meta WhatsApp Inbound Event Ingestion & Dispatch
+ * - Validates signature if META_APP_SECRET is configured.
+ * - Filters delivery status receipts, read receipts, and empty events.
+ * - Resolves clinic by phone_number_id via api.get_clinic_by_phone_number_id.
+ * - Atomically registers event in api.inbound_events for deduplication and durability.
+ * - Immediately acknowledges Meta with HTTP 200 (prevents timeout and retries).
+ * - Asynchronously executes ReceptionistService in background.
+ */
+export async function handleInboundWebhook(req: Request, res: Response): Promise<void> {
+  const rawBody = (req as any).rawBody
+    ? (req as any).rawBody
+    : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}), 'utf-8');
+
+  // 1. Signature Verification (if META_APP_SECRET is configured)
+  const appSecret = process.env.META_APP_SECRET || (env as any).META_APP_SECRET;
+  if (appSecret) {
+    const signatureHeader = req.headers['x-hub-signature-256'];
+    const signatureStr = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+
+    if (!signatureStr || !signatureStr.startsWith('sha256=')) {
+      logger.warn('Meta webhook rejected: missing X-Hub-Signature-256 header');
+      res.status(401).json({
+        ok: false,
+        code: 'UNAUTHORIZED',
+        message: 'Missing or invalid signature header',
+      });
+      return;
+    }
+
+    const expectedHash = 'sha256=' + crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex');
+    if (!timingSafeEqualStr(signatureStr.toLowerCase(), expectedHash.toLowerCase())) {
+      logger.warn('Meta webhook rejected: signature mismatch');
+      res.status(401).json({
+        ok: false,
+        code: 'UNAUTHORIZED',
+        message: 'Invalid HMAC signature',
+      });
+      return;
+    }
+  }
+
+  const body = req.body;
+  if (!body || typeof body !== 'object') {
+    res.status(400).json({ ok: false, code: 'INVALID_PAYLOAD', message: 'Request body must be a JSON object' });
+    return;
+  }
+
+  // Filter out non-WhatsApp payloads
+  if (body.object !== 'whatsapp_business_account' && !Array.isArray(body.entry)) {
+    res.status(200).json({ ok: true, code: 'IGNORED_NON_WHATSAPP' });
+    return;
+  }
+
+  const entry = Array.isArray(body.entry) ? body.entry[0] : null;
+  const change = entry && Array.isArray(entry.changes) ? entry.changes[0] : null;
+  const value = change && change.field === 'messages' ? change.value : null;
+
+  if (!value) {
+    res.status(200).json({ ok: true, code: 'NO_MESSAGE_FIELD' });
+    return;
+  }
+
+  // 2. Handle Delivery Status Receipts (sent, delivered, read) without triggering AI
+  if (Array.isArray(value.statuses) && value.statuses.length > 0) {
+    const statusObj = value.statuses[0];
+    const statusWamid = statusObj.id;
+    const newStatus = statusObj.status; // 'sent' | 'delivered' | 'read' | 'failed'
+
+    if (statusWamid) {
+      try {
+        if (newStatus === 'delivered' || newStatus === 'read') {
+          await prisma.$queryRawUnsafe(
+            `UPDATE api.notifications
+             SET status = 'sent'::api.delivery_status
+             WHERE provider_message_id = $1 AND status != 'sent'::api.delivery_status`,
+            statusWamid
+          );
+        } else if (newStatus === 'failed') {
+          await prisma.$queryRawUnsafe(
+            `UPDATE api.notifications
+             SET status = 'failed'::api.delivery_status, error = $2::jsonb
+             WHERE provider_message_id = $1`,
+            statusWamid,
+            JSON.stringify(statusObj.errors || { message: 'WhatsApp message delivery failed' })
+          );
+        }
+      } catch (err: any) {
+        logger.warn('Error updating message status from Meta status webhook', { error: err.message, statusWamid });
+      }
+    }
+
+    res.status(200).json({ ok: true, code: 'STATUS_ACK', status: newStatus });
+    return;
+  }
+
+  // 3. Validate Incoming Messages
+  if (!Array.isArray(value.messages) || value.messages.length === 0) {
+    res.status(200).json({ ok: true, code: 'NO_MESSAGES' });
+    return;
+  }
+
+  const msg = value.messages[0];
+  const rawPhoneId = String(value.metadata?.phone_number_id || '').trim();
+  const providerEventId = String(msg.id || '').trim();
+  const senderPhone = String(msg.from || '').trim();
+  const contacts = Array.isArray(value.contacts) ? value.contacts : [];
+  const contact = contacts.find((c: any) => c && c.wa_id === senderPhone) || contacts[0] || null;
+  const senderName = contact?.profile?.name || '';
+  const messageText = msg.type === 'text' && msg.text?.body ? String(msg.text.body).trim() : '';
+
+  if (!rawPhoneId) {
+    logger.warn('Meta webhook missing metadata.phone_number_id');
+    res.status(200).json({ ok: false, code: 'MISSING_PHONE_NUMBER_ID', message: 'phone_number_id is required' });
+    return;
+  }
+
+  if (!providerEventId) {
+    res.status(200).json({ ok: false, code: 'MISSING_MESSAGE_ID', message: 'messages[0].id is required' });
+    return;
+  }
+
+  // 4. Resolve Clinic Mapping
+  let clinicId: string | null = null;
+  let resolution: any = null;
+  try {
+    const dbRes = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT (api.get_clinic_by_phone_number_id($1)->'data'->>'clinic_id')::text AS clinic_id,
+              api.get_clinic_by_phone_number_id($1) AS resolution;`,
+      rawPhoneId
+    );
+    clinicId = dbRes[0]?.clinic_id || null;
+    resolution = dbRes[0]?.resolution || null;
+  } catch (err: any) {
+    logger.error('Failed to resolve clinic from phone_number_id', { error: err.message, phone_number_id: rawPhoneId });
+  }
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!clinicId || !uuidRegex.test(clinicId)) {
+    const unmappedCode = resolution?.code || 'NOT_FOUND';
+    const unmappedMsg = resolution?.message || 'No clinic found for this phone number ID';
+    logger.warn('Meta webhook unmapped phone number ID', { phone_number_id: rawPhoneId, code: unmappedCode });
+    res.status(200).json({ ok: false, code: unmappedCode, message: unmappedMsg });
+    return;
+  }
+
+  // 5. Durable Inbound Event Registration & Idempotency
+  const rawPayloadStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+  const payloadHash = crypto.createHash('sha256').update(rawPayloadStr).digest('hex');
+
+  let inboundEventId: string | undefined;
+  let isDuplicate = false;
+
+  try {
+    const eventReg = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT api.register_inbound_event($1::uuid, 'meta_whatsapp', 'message', $2, $3, $4::jsonb) AS fn;`,
+      clinicId,
+      providerEventId,
+      payloadHash,
+      rawPayloadStr
+    );
+    const eventRes = eventReg[0]?.fn;
+    if (eventRes?.data?.duplicate) {
+      isDuplicate = true;
+    }
+    inboundEventId = eventRes?.data?.event_id;
+  } catch (err: any) {
+    logger.warn('api.register_inbound_event failed; falling back to direct Prisma insert', { error: err.message });
+    try {
+      const directInsert = await prisma.$queryRawUnsafe<any[]>(
+        `INSERT INTO api.inbound_events (clinic_id, provider, event_type, provider_event_id, payload_hash, raw_payload, state, created_at)
+         VALUES ($1::uuid, 'meta_whatsapp', 'message', $2, $3, $4::jsonb, 'received'::api.event_state, NOW())
+         ON CONFLICT (clinic_id, provider, provider_event_id) DO NOTHING
+         RETURNING id`,
+        clinicId,
+        providerEventId,
+        payloadHash,
+        rawPayloadStr
+      );
+      if (directInsert && directInsert.length > 0) {
+        inboundEventId = directInsert[0].id;
+      } else {
+        isDuplicate = true;
+      }
+    } catch (directErr: any) {
+      logger.error('CRITICAL: Database failure persisting inbound event', { error: directErr.message });
+      res.status(500).json({ ok: false, code: 'DATABASE_ERROR', message: 'Failed to persist event' });
+      return;
+    }
+  }
+
+  // If duplicate, acknowledge immediately without reprocessing
+  if (isDuplicate) {
+    logger.info('Duplicate WhatsApp webhook event received; safely acknowledging without re-processing', {
+      clinicId,
+      providerEventId,
+    });
+    res.status(200).json({ ok: true, code: 'DUPLICATE_EVENT', duplicate: true });
+    return;
+  }
+
+  // 6. IMMEDIATE ACKNOWLEDGMENT: Respond 200 OK to Meta before running AI / appointment logic
+  res.status(200).json({
+    ok: true,
+    code: 'EVENT_RECEIVED',
+    provider_event_id: providerEventId,
+    event_id: inboundEventId,
+  });
+
+  // 7. ASYNCHRONOUS PROCESSING: Run Receptionist Pipeline
+  setImmediate(async () => {
+    try {
+      await receptionistService.processInboundMessage({
+        clinicId: clinicId!,
+        channel: 'whatsapp',
+        senderPhone,
+        senderName,
+        messageText: messageText || 'Hello',
+        providerEventId,
+        inboundEventId,
+        rawPayload: body,
+      });
+    } catch (procErr: any) {
+      logger.error('Unhandled error during background receptionist processing', {
+        error: procErr.message,
+        stack: procErr.stack,
+        clinicId,
+        providerEventId,
+      });
+      if (inboundEventId) {
+        try {
+          await prisma.$queryRawUnsafe(
+            `UPDATE api.inbound_events SET state = 'failed'::api.event_state, error = $2::jsonb, last_attempt_at = NOW() WHERE id = $1::uuid`,
+            inboundEventId,
+            JSON.stringify({ error: procErr.message })
+          );
+        } catch {
+          // Ignore secondary DB error on failure recording
+        }
+      }
+    }
+  });
+}
+
+// ─── Register Webhook Routes ────────────────────────────────────────────────
+
+// GET Webhook Verification
+integrationsRouter.get('/whatsapp/webhook', handleWebhookVerification);
+integrationsRouter.get('/whatsapp/inbound', handleWebhookVerification);
+integrationsRouter.get('/webhook', handleWebhookVerification);
+integrationsRouter.get('/', handleWebhookVerification);
+
+// POST Inbound Message Ingestion
+integrationsRouter.post('/whatsapp/webhook', handleInboundWebhook);
+integrationsRouter.post('/whatsapp/inbound', handleInboundWebhook);
+integrationsRouter.post('/webhook', handleInboundWebhook);
+integrationsRouter.post('/', (req: Request, res: Response, next: NextFunction) => {
+  if (req.body?.object === 'whatsapp_business_account' || req.headers['x-hub-signature-256']) {
+    return handleInboundWebhook(req, res);
+  }
+  next();
 });

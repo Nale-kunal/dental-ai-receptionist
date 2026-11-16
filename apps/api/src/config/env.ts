@@ -81,6 +81,8 @@ export const envSchema = z.object({
   META_PHONE_NUMBER_ID: z.string().optional(),
   META_WABA_ID: z.string().optional(),
   META_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+  META_APP_SECRET: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
 
   // Machine-to-Machine Internal Service Key for n8n / external webhook dispatch
   INTERNAL_SERVICE_KEY: z.string().min(16, 'INTERNAL_SERVICE_KEY must be at least 16 characters').optional(),

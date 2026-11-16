@@ -1515,25 +1515,34 @@ export const ReceptionistView: React.FC<ReceptionistViewProps> = ({
                         )}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span>
-                          Safe test mode: Replies recorded in patient chart (Live WhatsApp dispatch uses configured credentials)
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('integration')}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: 'var(--accent-primary)',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            textDecoration: 'underline',
-                            padding: 0,
-                          }}
-                        >
-                          Configure WhatsApp
-                        </button>
+                        {settings?.integrationEnabled && settings?.integrationStatus === 'valid' ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--success)', fontWeight: 500 }}>
+                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)', display: 'inline-block' }} />
+                            Live mode active: Patient replies are dispatched directly via verified WhatsApp Cloud API
+                          </span>
+                        ) : (
+                          <>
+                            <span>
+                              Safe test mode: Replies recorded in patient chart (Live WhatsApp dispatch uses configured credentials)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('integration')}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: 'var(--accent-primary)',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                textDecoration: 'underline',
+                                padding: 0,
+                              }}
+                            >
+                              Configure WhatsApp
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

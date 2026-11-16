@@ -72,8 +72,19 @@ export function createApp(): express.Application {
   }));
 
   // ─── Body parsing ─────────────────────────────────────────────────────────────
-  app.use(express.json({ limit: '1mb' }));
-  app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+  app.use(express.json({
+    limit: '1mb',
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }));
+  app.use(express.urlencoded({
+    extended: false,
+    limit: '1mb',
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }));
   app.use(compression());
 
   // ─── Request logging ──────────────────────────────────────────────────────────
@@ -132,6 +143,10 @@ export function createApp(): express.Application {
   app.use(`${API}/schedules`, schedulesRouter);
   app.use(`${API}/availability`, availabilityRouter);
   app.use(`${API}/integrations`, integrationsRouter);
+
+  // Backward-compatible direct webhook endpoints
+  app.use('/webhook/dental/inbound', integrationsRouter);
+  app.use('/api/v1/webhook/dental/inbound', integrationsRouter);
 
   // ─── 404 handler ─────────────────────────────────────────────────────────────
   app.use((_req, res) => {

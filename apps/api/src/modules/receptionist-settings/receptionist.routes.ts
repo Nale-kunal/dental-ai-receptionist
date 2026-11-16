@@ -86,6 +86,7 @@ receptionistRouter.get('/settings', async (req, res, next) => {
       quietHours: s.quiet_hours ?? r.quiet_hours ?? { enabled: false, start: '22:00', end: '08:00' },
       bookingRules: s.booking_rules ?? r.booking_rules ?? { minAdvanceHours: 2, maxAdvanceDays: 60, slotDurationMinutes: 30 },
       integrationStatus: integration?.status || 'unconfigured',
+      integrationEnabled: Boolean(integration?.enabled),
       hasWhatsAppToken: Boolean(integration?.accessToken),
     };
 
